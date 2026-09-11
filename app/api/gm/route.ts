@@ -11,7 +11,6 @@ import {
   type ToolExecutionResult
 } from '@/lib/gm-tools';
 
-const DEFAULT_GROQ_KEY = process.env.GROQ_API_KEY || '';
 
 export async function POST(req: NextRequest) {
   try {
@@ -25,7 +24,8 @@ export async function POST(req: NextRequest) {
     const a = JSON.parse(raw);
 
     const rawKey = typeof a.key === 'string' ? a.key.trim() : '';
-    const userKey = rawKey || DEFAULT_GROQ_KEY;
+const serverGroqKey = process.env.GROQ_API_KEY?.trim() || '';
+const userKey = rawKey || serverGroqKey;
     if (!userKey) {
       return NextResponse.json(
         { error: 'Chave da API não configurada. Defina GROQ_API_KEY no arquivo .env do servidor.' },
