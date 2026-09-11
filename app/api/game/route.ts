@@ -5,6 +5,7 @@ import { isOriginAllowed } from '@/lib/auth-origin';
 import {
   initialState,
   starterState,
+  newCharacter,
   entry,
   validateCharacter,
   calculateEquippedStats,
@@ -334,19 +335,6 @@ export async function POST(req: NextRequest) {
         a.character = c.id;
       }
     }
-    if (!c && s.characters.length === 0) {
-      const defaultHero: Character = {
-        ...newCharacter(),
-        id: a.character || `hero-${Date.now()}`,
-        owner: user.userId,
-        name: 'Aventureiro',
-        x: 4,
-        y: 6
-      };
-      s.characters.push(defaultHero);
-      c = defaultHero;
-      a.character = c.id;
-    }
     const own = () => {
       if (!c) throw Error('Personagem não encontrado.');
       if (isMmo) {
@@ -383,7 +371,9 @@ export async function POST(req: NextRequest) {
           if (isMmo) {
             const existing = s.characters.find((x) => x.owner === user!.userId);
             if (existing) {
-              throw Error('Você já possui um personagem ativo neste mundo MMO. Use ou evolua seu herói atual.');
+              s.characters = s.characters.map((x) => (x.id === existing.id ? { ...next, id: existing.id, owner: existing.owner } : x));
+              log(`${next.name} atualizou sua ficha de aventureiro.`);
+              break;
             }
           }
           const maxChars = isMmo ? 32 : 12;
