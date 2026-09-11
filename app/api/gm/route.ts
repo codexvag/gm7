@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { database } from '@/lib/room-db';
+import { isOriginAllowed } from '@/lib/auth-origin';
 import { GM_PROMPT } from '@/lib/gm-prompt';
 import pages from '@/lib/srd.json';
 import { entry, type State } from '@/lib/game-engine';
@@ -16,7 +17,7 @@ export async function POST(req: NextRequest) {
   try {
     const user = await getChatGPTUser();
     if (!user) return NextResponse.json({ error: 'Entre para conversar com a GM.' }, { status: 401 });
-    if (req.headers.get('origin') && req.headers.get('origin') !== req.nextUrl.origin) {
+    if (!isOriginAllowed(req)) {
       return NextResponse.json({ error: 'Origem inválida.' }, { status: 403 });
     }
     const raw = await req.text();

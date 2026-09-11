@@ -7,24 +7,12 @@ async function ensureTables(db: D1Database): Promise<void> {
   if (!initPromise) {
     initPromise = (async () => {
       try {
-        await db.exec(`
-          CREATE TABLE IF NOT EXISTS members (
-            room text NOT NULL,
-            user text NOT NULL,
-            PRIMARY KEY(room, user)
-          );
-          CREATE TABLE IF NOT EXISTS rooms (
-            id text PRIMARY KEY NOT NULL,
-            owner text NOT NULL,
-            name text NOT NULL,
-            state text NOT NULL,
-            version integer DEFAULT 0 NOT NULL,
-            code text NOT NULL
-          );
-          CREATE UNIQUE INDEX IF NOT EXISTS rooms_code_unique ON rooms (code);
-        `);
+        await db.prepare('CREATE TABLE IF NOT EXISTS members (room TEXT NOT NULL, user TEXT NOT NULL, PRIMARY KEY(room, user))').run();
+        await db.prepare('CREATE TABLE IF NOT EXISTS rooms (id TEXT PRIMARY KEY NOT NULL, owner TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL, version INTEGER DEFAULT 0 NOT NULL, code TEXT NOT NULL)').run();
+        await db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS rooms_code_unique ON rooms (code)').run();
+        console.log('[room-db] Tables and indexes verified successfully.');
       } catch (err) {
-        console.warn('Auto table migration warning (may already exist):', err);
+        console.error('[room-db] Table verification error:', err);
       }
     })();
   }

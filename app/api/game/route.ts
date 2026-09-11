@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { database } from '@/lib/room-db';
+import { isOriginAllowed } from '@/lib/auth-origin';
 import {
   initialState,
   starterState,
@@ -160,7 +161,8 @@ export async function GET(req: NextRequest) {
       rooms: roomList,
       room: { ...room, state: JSON.parse(room.state) }
     }), user);
-  } catch {
+  } catch (err) {
+    console.error('[GET /api/game Error]:', err);
     return NextResponse.json({ error: 'Não foi possível carregar a mesa. Tente novamente.' }, { status: 503 });
   }
 }
@@ -170,7 +172,7 @@ export async function POST(req: NextRequest) {
   try {
     user = await getChatGPTUser();
     if (!user) return NextResponse.json({ error: 'Entre para salvar sua aventura.' }, { status: 401 });
-    if (req.headers.get('origin') && req.headers.get('origin') !== req.nextUrl.origin) {
+    if (!isOriginAllowed(req)) {
       return NextResponse.json({ error: 'Origem inválida.' }, { status: 403 });
     }
     const raw = await req.text();
