@@ -67,6 +67,7 @@ export class GameRoomDurableObject {
   public seq: number;
   public sockets: Map<any, ClientConnectionMeta>;
   private debounceTimer: NodeJS.Timeout | null = null;
+  private dbPollingTimer: NodeJS.Timeout | null = null;
   private isDestroyed = false;
 
   constructor(roomId: string, initialStateData?: State, initialVersion: number = 0) {
@@ -95,6 +96,23 @@ export class GameRoomDurableObject {
 
     roomEventBus.on(`room:${this.roomId}`, handleBusUpdate);
     void this.syncWithDatabase();
+
+    // Cross-Container Synchronization via SQLite Polling
+    // Checks every 1000ms if another container updated the DB (e.g. on Fly.io scale > 1)
+    this.dbPollingTimer = setInterval(async () => {
+      if (this.isDestroyed || this.sockets.size === 0) return;
+      const stateChanged = await this.syncWithDatabase();
+      if (stateChanged) {
+        this.seq++;
+        this.broadcast({
+          type: 'SYNC_SNAPSHOT',
+          roomId: this.roomId,
+          state: this.state,
+          version: this.version,
+          seq: this.seq
+        });
+      }
+    }, 1000);
   }
 
   /**
@@ -113,8 +131,8 @@ export class GameRoomDurableObject {
 
       if (r && r.state) {
         const dbState = JSON.parse(r.state) as State;
-        // Accept state if DB is newer or equal, or if DB has characters while RAM has none
-        if (r.version >= this.version || (dbState.characters.length > 0 && this.state.characters.length === 0)) {
+        // Accept state if DB is strictly newer, or if DB has characters while RAM has none
+        if (r.version > this.version || (dbState.characters.length > 0 && this.state.characters.length === 0)) {
           this.state = dbState;
           this.version = r.version;
           return true;
@@ -590,6 +608,10 @@ export class GameRoomDurableObject {
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
+    }
+    if (this.dbPollingTimer) {
+      clearInterval(this.dbPollingTimer);
+      this.dbPollingTimer = null;
     }
     this.sockets.clear();
   }
