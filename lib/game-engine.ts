@@ -1505,6 +1505,7 @@ export type WsClientMessage =
   | { type: 'CAST_SPELL'; roomId: string; actorId: string; targetId?: string; spellName: string; level?: number; seq: number }
   | { type: 'ACTION'; roomId: string; action: string; payload?: Record<string, unknown>; seq: number }
   | { type: 'CHAT'; roomId: string; sender: string; text: string }
+  | { type: 'FORCE_SYNC' }
   | { type: 'PING'; timestamp: number };
 
 export type WsServerMessage =

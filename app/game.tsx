@@ -492,6 +492,13 @@ export default function Game() {
 
                 setRoom((prev) => {
                   if (!prev) return prev;
+                  // Se o personagem não existe no nosso estado, isso significa que perdemos um SYNC_SNAPSHOT.
+                  // Precisamos forçar o carregamento do banco de dados para puxar sua ficha completa.
+                  if (!prev.state.characters.some(c => c.id === msg.characterId)) {
+                    if (!busy) void load(roomId);
+                    return prev;
+                  }
+                  
                   return {
                     ...prev,
                     version: Math.max(prev.version, msg.seq),
@@ -677,6 +684,11 @@ export default function Game() {
               room: d.room
             });
           } catch {}
+
+          // Fix: Trigger MMO WebSocket Force Sync immediately after REST mutation
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'FORCE_SYNC' }));
+          }
         } else {
           await load(d.id || curRoom?.id);
         }

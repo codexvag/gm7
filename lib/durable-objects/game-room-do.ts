@@ -207,6 +207,27 @@ export class GameRoomDurableObject {
             seq: this.seq,
             serverTime: Date.now()
           });
+          
+          // Fix: Broadcast SYNC_SNAPSHOT to ALL other players so they immediately see the new player
+          this.broadcast({
+            type: 'SYNC_SNAPSHOT',
+            roomId: this.roomId,
+            state: this.state,
+            version: this.version,
+            seq: this.seq
+          });
+          break;
+        }
+
+        case 'FORCE_SYNC': {
+          await this.syncWithDatabase();
+          this.broadcast({
+            type: 'SYNC_SNAPSHOT',
+            roomId: this.roomId,
+            state: this.state,
+            version: this.version,
+            seq: this.seq
+          });
           break;
         }
 
