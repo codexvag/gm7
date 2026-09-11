@@ -207,6 +207,8 @@ export default function Game() {
   const [mobileTab, setMobileTab] = useState<'party' | 'map' | 'gm'>('map');
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const [showCharacterCreator, setShowCharacterCreator] = useState(false);
+  const creatorDismissedRef = React.useRef(false); // Guard: once user closes creator, don't re-open via load()
+  const [showWorldSelector, setShowWorldSelector] = useState(false); // World selection screen
   const [interactingPlayer, setInteractingPlayer] = useState<Character | null>(null);
   const actionQueueRef = React.useRef(Promise.resolve<any>(null));
   const localMoveShieldRef = React.useRef<{ [charId: string]: { x: number; y: number; time: number } }>({});
@@ -328,6 +330,13 @@ export default function Game() {
       if (d.rooms && d.rooms.length > 0) setRooms(d.rooms);
       if (d.room) {
         applyProtectedRoomState(d.room);
+
+        // ── Sync currentAct from server-persisted state ──
+        const serverAct = d.room.state.act || (d.room.state.location + 1);
+        if ([1, 2, 3].includes(serverAct)) {
+          setCurrentAct(serverAct as 1 | 2 | 3);
+        }
+
         const heroes = d.room.state.characters || [];
         const isMmo = d.room.id === 'mmo-world-village';
         const myHeroes = heroes.filter((c: Character) => isMmo ? c.owner === d.user : (!c.owner || c.owner === d.user));
@@ -342,9 +351,12 @@ export default function Game() {
             ? e
             : d.room.state.enemies[0]?.id || ''
         );
-        if (heroes.length === 0 || (isMmo && myHeroes.length === 0)) {
-          setShowCharacterCreator(true);
-        } else {
+        // Only show character creator if user has NO heroes AND hasn't dismissed it this session
+        if ((heroes.length === 0 || (isMmo && myHeroes.length === 0)) && !creatorDismissedRef.current) {
+          setShowWorldSelector(true); // Show world selector first, then creator
+        }
+        // Never re-open creator if user already has heroes
+        if (myHeroes.length > 0 || heroes.length > 0) {
           setShowCharacterCreator(false);
         }
       }
@@ -368,7 +380,8 @@ export default function Game() {
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
       if (url.searchParams.get('wiped') === '1') {
-        setShowCharacterCreator(true);
+        creatorDismissedRef.current = false;
+        setShowWorldSelector(true);
         url.searchParams.delete('wiped');
         window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
       }
@@ -867,12 +880,16 @@ export default function Game() {
   // HANDLE ADVANCE ACT
   const handleAdvanceAct = async () => {
     const next = (currentAct === 1 ? 2 : currentAct === 2 ? 3 : 1) as 1 | 2 | 3;
-    setCurrentAct(next);
     const newSeed = Date.now();
-    setDungeonSeed(newSeed);
-    setProceduralDungeon(generateProceduralDungeon(next, dungeonSize, newSeed));
     const ok = await action({ action: 'advanceAct', act: next });
     if (ok) {
+      // Only update client state AFTER server confirms the act change
+      setCurrentAct(next);
+      setDungeonSeed(newSeed);
+      setProceduralDungeon(generateProceduralDungeon(next, dungeonSize, newSeed));
+      const biomeForAct = next === 1 ? 'village' : next === 2 ? 'dungeon' : 'dungeon';
+      setBattlemapBiome(biomeForAct as any);
+      setBattlemapSeed(newSeed);
       void narrate(
         '',
         `O grupo desce às profundezas e alcança o ${CAMPAIGN_ACTS[next].title}: ${CAMPAIGN_ACTS[next].subtitle}. ${CAMPAIGN_ACTS[next].dialogueIntro}`
@@ -1020,14 +1037,17 @@ export default function Game() {
     }
   };
 
-  const handleTravel = (b: BiomeType) => {
+  const handleTravel = async (b: BiomeType) => {
     const locIdx = b === 'village' ? 0 : b === 'forest' ? 1 : 2;
-    setBattlemapBiome(b);
-    setBattlemapSeed(Date.now());
     const destName = b === 'village' ? 'Vila do Rio Verde' : b === 'forest' ? 'A Floresta dos Sussurros' : 'Catacumbas dos Três Selos';
-    void action({ action: 'location', location: locIdx, biome: b }).then(() => {
+    const ok = await action({ action: 'location', location: locIdx, biome: b });
+    if (ok) {
+      // Only update client biome AFTER server confirms the travel
+      setBattlemapBiome(b);
+      setBattlemapSeed(Date.now());
+      setCurrentAct((locIdx + 1) as 1 | 2 | 3);
       void narrate('', `O grupo de heróis viajou para ${destName}. O ambiente ao redor se transforma.`);
-    });
+    }
   };
 
   return (
@@ -1258,9 +1278,13 @@ export default function Game() {
           {/* Full Character Creator Wizard (4 Steps D&D 5e) */}
           <CharacterCreator
             isOpen={showCharacterCreator}
-            onClose={() => setShowCharacterCreator(false)}
+            onClose={() => {
+              setShowCharacterCreator(false);
+              creatorDismissedRef.current = true; // Don't re-open via load()
+            }}
             busy={busy}
             onSave={async (newHero) => {
+              creatorDismissedRef.current = true; // Don't re-open via load()
               setShowCharacterCreator(false);
               setSelected(newHero.id);
               setView('Aventura');
@@ -1273,6 +1297,69 @@ export default function Game() {
               void narrate('', `${newHero.name}, um ${newHero.species} ${newHero.className} de nível ${newHero.level}, juntou-se à aventura em Vila do Rio Verde!`);
             }}
           />
+
+          {/* ═══ WORLD SELECTION DIALOG ═══ */}
+          {/* Shows before character creator for first-time users — clear Solo vs MMO choice */}
+          <Dialog open={showWorldSelector} onOpenChange={setShowWorldSelector}>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle className="text-center text-xl font-serif text-amber-200">
+                  ⚔️ Escolha seu Mundo
+                </DialogTitle>
+                <DialogDescription className="text-center text-zinc-400 text-sm">
+                  Como deseja jogar Crônicas do Vazio?
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col gap-3 mt-2">
+                {/* Solo Campaign */}
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-4 p-4 rounded-2xl bg-gradient-to-r from-amber-950/80 via-zinc-900 to-amber-950/80 border-2 border-amber-500/60 hover:border-amber-400 hover:shadow-[0_0_25px_rgba(245,158,11,0.4)] transition-all active:scale-[0.98] text-left group cursor-pointer"
+                  onClick={() => {
+                    setShowWorldSelector(false);
+                    setShowCharacterCreator(true);
+                  }}
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-400 flex items-center justify-center text-3xl shrink-0 shadow-lg group-hover:scale-110 transition-transform">
+                    ⚔️
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <strong className="block text-sm font-serif text-amber-200 group-hover:text-amber-100">
+                      Campanha Solo
+                    </strong>
+                    <span className="text-[11px] text-zinc-400 block leading-tight mt-0.5">
+                      Aventura privada com 3 atos, NPCs, exploração e combate tático. Seu próprio mundo.
+                    </span>
+                  </div>
+                  <ChevronRight size={20} className="text-amber-400 shrink-0 group-hover:translate-x-1 transition-transform" />
+                </button>
+
+                {/* MMO World */}
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-4 p-4 rounded-2xl bg-gradient-to-r from-emerald-950/80 via-zinc-900 to-emerald-950/80 border-2 border-emerald-500/60 hover:border-emerald-400 hover:shadow-[0_0_25px_rgba(16,185,129,0.4)] transition-all active:scale-[0.98] text-left group cursor-pointer"
+                  onClick={async () => {
+                    setShowWorldSelector(false);
+                    await load('mmo-world-village');
+                    setShowCharacterCreator(true);
+                  }}
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-400 flex items-center justify-center text-3xl shrink-0 shadow-lg group-hover:scale-110 transition-transform">
+                    🌍
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <strong className="block text-sm font-serif text-emerald-200 group-hover:text-emerald-100">
+                      Mundo MMO Online
+                    </strong>
+                    <span className="text-[11px] text-zinc-400 block leading-tight mt-0.5">
+                      Vila compartilhada com outros jogadores. Explore, lute e forme grupos em tempo real.
+                    </span>
+                  </div>
+                  <ChevronRight size={20} className="text-emerald-400 shrink-0 group-hover:translate-x-1 transition-transform" />
+                </button>
+              </div>
+            </DialogContent>
+          </Dialog>
 
           {/* Mobile Drawer (Hamburger Menu & Strategic Tools) */}
           <MobileDrawer

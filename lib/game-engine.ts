@@ -472,6 +472,7 @@ export type State = {
   movementUsed?: number;
   biome?: 'village' | 'forest' | 'dungeon';
   partyInvites?: PartyInvite[];
+  act?: 1 | 2 | 3;
 };
 
 export const locations = [
@@ -511,6 +512,7 @@ export function initialState(): State {
     movementUsed: 0,
     biome: 'village',
     questProgress: {},
+    act: 1,
     npcs: [
       {
         id: 'doran',
@@ -638,6 +640,7 @@ export function starterState(ownerId = 'local-hero'): State {
     movementUsed: 0,
     biome: 'village',
     questProgress: {},
+    act: 1,
     npcs: [
       {
         id: 'doran',

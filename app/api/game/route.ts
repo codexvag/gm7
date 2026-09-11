@@ -183,7 +183,7 @@ export async function GET(req: NextRequest) {
       signedIn: true,
       user: user.userId,
       rooms: roomList,
-      room: { ...room, state: JSON.parse(room.state) }
+      room: room ? { ...room, state: JSON.parse(room.state) } : null
     }), user);
   } catch (err) {
     console.error('[GET /api/game Error]:', err);
@@ -797,8 +797,25 @@ export async function POST(req: NextRequest) {
         if (s.combat) throw Error('Encerre o combate antes de viajar.');
         const n = Number(a.location);
         if (!locations[n]) throw Error('Local inválido.');
+
+        // ── Progression gating: enforce campaign act order ──
+        if (!s.questProgress) s.questProgress = {};
+        const biomeTarget = locations[n].biome;
+        if (biomeTarget === 'forest' && !isMmo) {
+          // Allow forest after talking to at least one NPC (Doran)
+          if (!s.questProgress.doran_talked) {
+            throw Error('Converse com o Ancião Doran na vila antes de partir para a floresta.');
+          }
+        }
+        if (biomeTarget === 'dungeon' && !isMmo) {
+          if (!s.questProgress.forest_cleared) {
+            throw Error('Derrote os inimigos da Floresta dos Sussurros antes de descer às Catacumbas.');
+          }
+        }
+
         s.location = n;
         s.biome = locations[n].biome;
+        s.act = (n + 1) as 1 | 2 | 3;
 
         // Reposition heroes to safe entrance coordinates in the new biome
         for (let i = 0; i < s.characters.length; i++) {
@@ -807,6 +824,7 @@ export async function POST(req: NextRequest) {
         }
 
         // Configure enemies appropriate for the destination biome
+        // Enemies are placed but combat does NOT auto-start — exploration first!
         if (s.biome === 'forest') {
           s.enemies = [
             {
@@ -817,7 +835,7 @@ export async function POST(req: NextRequest) {
               ac: 11,
               attack: 2,
               damage: '1d4+1',
-              initiative: d20().raw + 1,
+              initiative: 0,
               x: 7,
               y: 3
             },
@@ -829,7 +847,7 @@ export async function POST(req: NextRequest) {
               ac: 10,
               attack: 2,
               damage: '1d4',
-              initiative: d20().raw + 1,
+              initiative: 0,
               x: 6,
               y: 2
             }
@@ -844,7 +862,7 @@ export async function POST(req: NextRequest) {
               ac: 13,
               attack: 3,
               damage: '1d6+2',
-              initiative: d20().raw + 2,
+              initiative: 0,
               x: 5,
               y: 2
             },
@@ -856,51 +874,62 @@ export async function POST(req: NextRequest) {
               ac: 11,
               attack: 2,
               damage: '1d6',
-              initiative: d20().raw + 1,
+              initiative: 0,
               x: 6,
               y: 4
             }
           ];
         } else {
-          // Peaceful village hub
+          // Peaceful village hub — never enemies
           s.enemies = [];
         }
 
-        if (s.enemies.length > 0) {
-          s.combat = true;
-          s.round = 1;
-          for (const char of s.characters) char.initiative = d20().raw + mod(char.stats[1]) + 3 - 2 * char.exhaustion;
-          for (const enemy of s.enemies) enemy.initiative = d20().raw + 1;
-          s.order = [...s.characters.filter((x) => x.hp > 0), ...s.enemies.filter((e) => e.hp > 0)]
-            .sort((a, b) => b.initiative - a.initiative || a.id.localeCompare(b.id))
-            .map((x) => x.id);
-          s.turn = 0;
-          s.actionUsed = false;
-        } else {
-          s.combat = false;
-          s.order = [];
-          s.actionUsed = false;
-        }
+        // Do NOT auto-start combat — player explores first, attacks to engage
+        s.combat = false;
+        s.order = [];
+        s.actionUsed = false;
+        s.movementUsed = 0;
+        s.round = 0;
+        s.turn = 0;
 
         if (s.biome === 'dungeon' || s.location === 2) {
-          if (!s.questProgress) s.questProgress = {};
           s.questProgress.dungeon_entered = true;
         }
 
         log(`O grupo viajou para ${locations[n].name}. ${locations[n].text}`, 'gm');
+        if (s.enemies.length > 0) {
+          log(`⚠️ Criaturas hostis espreitam os arredores. Prepare-se para o combate ou explore a área.`, 'gm');
+        }
         break;
       }
       case 'advanceAct': {
         const nextAct = Number(a.act) as 1 | 2 | 3;
         if (![1, 2, 3].includes(nextAct)) throw Error('Ato inválido.');
+
+        // ── Full tactical state reset ──
         s.location = nextAct - 1;
         s.biome = locations[s.location].biome;
+        s.act = nextAct;
         s.combat = false;
         s.order = [];
+        s.actionUsed = false;
+        s.bonusActionUsed = false;
+        s.movementUsed = 0;
+        s.round = 0;
+        s.turn = 0;
+
+        if (!s.questProgress) s.questProgress = {};
         if (nextAct >= 2) {
-          if (!s.questProgress) s.questProgress = {};
           s.questProgress.dungeon_entered = true;
         }
+
+        // Reposition heroes to safe entrance coordinates
+        for (let i = 0; i < s.characters.length; i++) {
+          s.characters[i].x = 4 + (i % 2);
+          s.characters[i].y = 6 + Math.floor(i / 2);
+        }
+
+        // Spawn act-appropriate enemies (exploration first — no auto-combat)
         if (nextAct === 2) {
           s.enemies = [
             {
@@ -911,7 +940,7 @@ export async function POST(req: NextRequest) {
               ac: 13,
               attack: 3,
               damage: '1d6+2',
-              initiative: d20().raw + 2,
+              initiative: 0,
               x: 5,
               y: 2
             },
@@ -923,12 +952,12 @@ export async function POST(req: NextRequest) {
               ac: 11,
               attack: 2,
               damage: '1d6',
-              initiative: d20().raw + 1,
+              initiative: 0,
               x: 6,
               y: 4
             }
           ];
-          log('O grupo desce às Catacumbas das Três Inscrições (Ato II). O ar cheira a poeira e ozônio arcano.', 'gm');
+          log('O grupo desce às Catacumbas das Três Inscrições (Ato II). O ar cheira a poeira e ozônio arcano. ⚠️ Criaturas hostis espreitam.', 'gm');
         } else if (nextAct === 3) {
           s.enemies = [
             {
@@ -939,7 +968,7 @@ export async function POST(req: NextRequest) {
               ac: 15,
               attack: 5,
               damage: '1d10+3',
-              initiative: d20().raw + 3,
+              initiative: 0,
               x: 4,
               y: 1
             },
@@ -951,12 +980,12 @@ export async function POST(req: NextRequest) {
               ac: 12,
               attack: 3,
               damage: '1d6+1',
-              initiative: d20().raw + 1,
+              initiative: 0,
               x: 2,
               y: 3
             }
           ];
-          log('O grupo alcança o Santuário do Vazio (Ato III). Malakor ergue-se do trono de pedra negra!', 'gm');
+          log('O grupo alcança o Santuário do Vazio (Ato III). Malakor ergue-se do trono de pedra negra! ⚠️ O confronto final se aproxima.', 'gm');
         } else {
           s.enemies = [
             {
@@ -967,7 +996,7 @@ export async function POST(req: NextRequest) {
               ac: 11,
               attack: 2,
               damage: '1d4+1',
-              initiative: d20().raw + 1,
+              initiative: 0,
               x: 5,
               y: 2
             }
@@ -1237,22 +1266,39 @@ function advance(s: State) {
     s.combat = false;
     s.order = [];
     s.actionUsed = false;
+    s.movementUsed = 0;
     s.logs.push(entry('Vitória! Todos os inimigos foram derrotados na masmorra.', 'gm'));
     return;
   }
   if (s.characters.every((x) => x.hp <= 0)) {
     s.combat = false;
     s.actionUsed = false;
+    s.movementUsed = 0;
     s.logs.push(entry('O grupo caiu inconsciente. A aventura precisa de socorro ou descanso!', 'gm'));
     return;
   }
+  let safety = 0;
   do {
     s.turn = (s.turn + 1) % s.order.length;
     if (s.turn === 0) s.round++;
-  } while ([...s.characters, ...s.enemies].find((x) => x.id === s.order[s.turn])!.hp <= 0);
+    safety++;
+    if (safety > s.order.length + 2) {
+      // All entities are dead or missing — end combat
+      s.combat = false;
+      s.order = [];
+      s.actionUsed = false;
+      s.movementUsed = 0;
+      s.logs.push(entry('O combate terminou — nenhuma criatura ativa restante.', 'gm'));
+      return;
+    }
+    const entity = [...s.characters, ...s.enemies].find((x) => x.id === s.order[s.turn]);
+    if (!entity) continue; // Entity no longer exists — skip
+    if (entity.hp > 0) break; // Found alive entity
+  } while (true);
 
   // Ready action for newly active entity
   s.actionUsed = false;
+  s.movementUsed = 0;
 }
 
 function executeEnemyAI(s: State) {
@@ -1261,10 +1307,16 @@ function executeEnemyAI(s: State) {
   while (s.combat && safety < 10) {
     safety++;
     const curId = s.order[s.turn];
+    if (!curId) break;
     const enemy = s.enemies.find((e) => e.id === curId && e.hp > 0);
     if (!enemy) break;
     const activeHeroes = s.characters.filter((c) => c.hp > 0);
-    if (activeHeroes.length === 0) break;
+    if (activeHeroes.length === 0) {
+      s.combat = false;
+      s.actionUsed = false;
+      s.movementUsed = 0;
+      break;
+    }
 
     // Smart target selection: distribute attacks among different heroes
     // Prefer heroes NOT already attacked this round, unless only 1 hero remains
@@ -1292,5 +1344,6 @@ function executeEnemyAI(s: State) {
   }
   if (s.combat) {
     s.actionUsed = false;
+    s.movementUsed = 0;
   }
 }
