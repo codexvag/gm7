@@ -457,7 +457,7 @@ export class GameRoomDurableObject {
   public async flushToDatabase(): Promise<boolean> {
     try {
       const { database } = await import('@/lib/room-db');
-      const db = database();
+      const db = await database();
       if (!db) return false;
 
       await db

@@ -7,7 +7,7 @@ import { initialState } from '@/lib/game-engine';
 export async function GET(req: NextRequest) {
   try {
     const user = await getChatGPTUser();
-    const db = database();
+    const db = await database();
     if (user) {
       const userRooms = await db
         .prepare('SELECT room FROM members WHERE user=?')

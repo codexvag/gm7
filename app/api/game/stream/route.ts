@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   const roomId = req.nextUrl.searchParams.get('room') || 'mmo-world-village';
 
   // Verify room exists in DB
-  const db = database();
+  const db = await database();
   const room = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(roomId).first<any>();
   if (!room) {
     return new Response(JSON.stringify({ error: 'Mesa não encontrada' }), {

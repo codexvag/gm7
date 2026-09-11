@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     const text = String(a.text || '').trim().slice(0, 4000);
     if (!text && !a.actionContext) throw Error('Escreva uma ação ou realize uma jogada.');
 
-    const db = database();
+    const db = await database();
     const room = await db
       .prepare('SELECT r.* FROM rooms r JOIN members m ON m.room=r.id WHERE r.id=? AND m.user=?')
       .bind(a.room, user.userId)

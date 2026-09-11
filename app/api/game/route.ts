@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
   try {
     const user = await getChatGPTUser();
     if (!user) return NextResponse.json({ signedIn: false, rooms: [] });
-    const db = database();
+    const db = await database();
     let rooms = await db
       .prepare('SELECT r.id,r.name FROM rooms r JOIN members m ON m.room=r.id WHERE m.user=?')
       .bind(user.userId)
@@ -176,7 +176,7 @@ export async function POST(req: NextRequest) {
     const raw = await req.text();
     if (raw.length > 100000) throw Error('Dados muito grandes.');
     const a = JSON.parse(raw);
-    const db = database();
+    const db = await database();
 
     if (a.action === 'wipe' || a.action === 'resetAll') {
       const userRooms = await db
