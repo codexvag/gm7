@@ -420,6 +420,7 @@ export type Character = {
   equipment?: EquipmentSlots;
   gold?: number;
   partyId?: string;
+  updatedAt?: number;
 };
 
 export type PartyInvite = {
@@ -445,6 +446,7 @@ export type Enemy = {
   x: number;
   y: number;
   conditions?: string[];
+  updatedAt?: number;
 };
 
 export type Log = {
@@ -473,6 +475,7 @@ export type State = {
   biome?: 'village' | 'forest' | 'dungeon';
   partyInvites?: PartyInvite[];
   act?: 1 | 2 | 3;
+  updatedAt?: number;
 };
 
 export const locations = [

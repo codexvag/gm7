@@ -13,6 +13,7 @@ import {
 } from '@/lib/game-engine';
 import { MAP_COLLISION_PROFILES, type CollisionPolygon } from '@/lib/collision-system';
 import { roomEventBus, emitRoomUpdate, type RoomUpdatePayload } from '@/lib/room-events';
+import { mergeStates, touchChar } from '@/lib/state-merge';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -78,11 +79,13 @@ export class GameRoomDurableObject {
     this.sockets = new Map();
 
     // Listen to external HTTP mutations from roomEventBus so DO state stays 100% in sync
+    // Merges per-entity by freshness so RAM-only moves are never discarded.
     const handleBusUpdate = (payload: RoomUpdatePayload) => {
       if (payload.roomId !== this.roomId || this.isDestroyed) return;
-      if (payload.version >= this.version) {
-        this.version = payload.version;
-        this.state = payload.state;
+      const prevState = this.state;
+      this.state = mergeStates(this.state, payload.state, this.version, payload.version);
+      this.version = Math.max(this.version, payload.version);
+      if (JSON.stringify(this.state) !== JSON.stringify(prevState)) {
         this.seq++;
         this.broadcast({
           type: 'SYNC_SNAPSHOT',
@@ -98,7 +101,7 @@ export class GameRoomDurableObject {
     void this.syncWithDatabase();
 
     // Cross-Container Synchronization via SQLite Polling
-    // Checks every 1000ms if another container updated the DB (e.g. on Fly.io scale > 1)
+    // Checks every 300ms if another container updated the DB (e.g. on Fly.io scale > 1)
     this.dbPollingTimer = setInterval(async () => {
       if (this.isDestroyed || this.sockets.size === 0) return;
       const stateChanged = await this.syncWithDatabase();
@@ -112,7 +115,7 @@ export class GameRoomDurableObject {
           seq: this.seq
         });
       }
-    }, 1000);
+    }, 300);
   }
 
   /**
@@ -131,12 +134,12 @@ export class GameRoomDurableObject {
 
       if (r && r.state) {
         const dbState = JSON.parse(r.state) as State;
-        // Accept state if DB is strictly newer, or if DB has characters while RAM has none
-        if (r.version > this.version || (dbState.characters.length > 0 && this.state.characters.length === 0)) {
-          this.state = dbState;
-          this.version = r.version;
-          return true;
-        }
+        // Merge per-entity by freshness so a divergent DB snapshot never
+        // discards RAM-only moves, and new players always appear.
+        const prevState = this.state;
+        this.state = mergeStates(this.state, dbState, this.version, r.version);
+        this.version = Math.max(this.version, r.version);
+        return JSON.stringify(this.state) !== JSON.stringify(prevState);
       }
       return false;
     } catch (err) {
@@ -348,7 +351,8 @@ export class GameRoomDurableObject {
         initiative: 12,
         deathSuccess: 0,
         deathFail: 0,
-        exhaustion: 0
+        exhaustion: 0,
+        updatedAt: Date.now()
       };
       this.state.characters.push(defaultHero);
       char = defaultHero;
@@ -553,7 +557,7 @@ export class GameRoomDurableObject {
   }
 
   /**
-   * Debounced D1 persistence (500ms delay) to prevent database write flooding
+   * Debounced D1 persistence (200ms delay) to prevent database write flooding
    */
   public scheduleDebouncedSave(): void {
     if (this.debounceTimer) {
@@ -563,7 +567,7 @@ export class GameRoomDurableObject {
       this.flushToDatabase().catch((err) => {
         console.warn(`[DO ${this.roomId}] Debounced D1 save notice:`, err?.message);
       });
-    }, 500);
+    }, 200);
   }
 
   /**
@@ -575,21 +579,13 @@ export class GameRoomDurableObject {
       const db = await database();
       if (!db) return false;
 
-      // Protection: never overwrite D1 with empty characters if D1 already has characters!
+      // Merge current DB row into RAM before writing so characters and updates
+      // persisted by other isolates are never overwritten (union by freshness).
       const currentDb = await db.prepare('SELECT state, version FROM rooms WHERE id = ?').bind(this.roomId).first<{ state: string; version: number }>();
       if (currentDb && currentDb.state) {
         const dbState = JSON.parse(currentDb.state) as State;
-        if (dbState.characters.length > 0 && this.state.characters.length === 0) {
-          console.warn(`[DO ${this.roomId}] RAM has 0 characters while D1 has ${dbState.characters.length}. Syncing from D1.`);
-          this.state = dbState;
-          this.version = currentDb.version;
-          return true;
-        }
-        if (currentDb.version > this.version) {
-          this.state = dbState;
-          this.version = currentDb.version;
-          return true;
-        }
+        this.state = mergeStates(this.state, dbState, this.version, currentDb.version);
+        this.version = Math.max(this.version, currentDb.version);
       }
 
       await db
