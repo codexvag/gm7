@@ -1,55 +1,41 @@
 # syntax = docker/dockerfile:1
 
-# Adjust NODE_VERSION as desired
 ARG NODE_VERSION=22.14.0
 FROM node:${NODE_VERSION}-slim AS base
 
-LABEL fly_launch_runtime="Next.js"
+LABEL fly_launch_runtime="Vinext"
 
-# Next.js app lives here
 WORKDIR /app
 
-# Set production environment
 ENV NODE_ENV="production"
+ENV HOST="0.0.0.0"
+ENV PORT="3000"
 
-# Install pnpm
 ARG PNPM_VERSION=12.3.4
 RUN npm install -g pnpm@$PNPM_VERSION
 
-
-# Throw-away build stage to reduce size of final image
-FROM base AS build
-
-# Install packages needed to build node modules
+# Install system dependencies needed for native modules (sharp, workerd, etc.)
 RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y build-essential node-gyp pkg-config python-is-python3
+    apt-get install --no-install-recommends -y \
+    ca-certificates \
+    curl \
+    build-essential \
+    python-is-python3 \
+    pkg-config && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install node modules
-COPY .npmrc package-lock.json package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+# Install node dependencies
+COPY .npmrc package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install
 
-# Copy application code
+# Copy application source code
 COPY . .
 
-# Build application
-RUN npx next build --experimental-build-mode compile
+# Build application with vinext (generates dist/server and dist/client)
+RUN pnpm run build
 
-# Remove development dependencies
-RUN pnpm prune --prod
-
-
-# Final stage for app image
-FROM base
-
-# Copy built application
-COPY --from=build /app /app
-
-# Ensure the Fly entrypoint is executable
-RUN chmod +x /app/docker-entrypoint.js
-
-# Entrypoint sets up the container.
-ENTRYPOINT [ "/app/docker-entrypoint.js" ]
-
-# Start the server by default, this can be overwritten at runtime
+# Expose port
 EXPOSE 3000
-CMD [ "pnpm", "run", "start" ]
+
+# Start server using resilient launcher
+CMD [ "node", "./scripts/start-server.mjs" ]
