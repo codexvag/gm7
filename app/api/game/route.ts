@@ -317,7 +317,8 @@ export async function POST(req: NextRequest) {
       return withUserSession(NextResponse.json({ error: 'Mesa indisponível no momento.' }, { status: 503 }), user);
     }
 
-    if (a.version !== undefined && r.version !== a.version && a.action !== 'character') {
+    const isMmo = r.id === 'mmo-world-village';
+    if (a.version !== undefined && r.version !== a.version && a.action !== 'character' && !isMmo && a.action !== 'move' && a.action !== 'pass' && a.action !== 'location' && a.action !== 'attack' && a.action !== 'check' && a.action !== 'useItem' && a.action !== 'respawn') {
       return withUserSession(NextResponse.json({
         error: 'A mesa mudou. Os dados foram atualizados; tente sua ação novamente.',
         room: { ...r, state: JSON.parse(r.state) }
@@ -325,9 +326,27 @@ export async function POST(req: NextRequest) {
     }
 
     let s: State = JSON.parse(r.state);
-    const isMmo = r.id === 'mmo-world-village';
     const owner = isMmo || r.owner === user.userId;
-    const c = s.characters.find((c) => c.id === a.character);
+    let c = s.characters.find((c) => c.id === a.character);
+    if (!c && s.characters.length > 0) {
+      c = s.characters.find((ch) => isMmo ? ch.owner === user!.userId : (!ch.owner || ch.owner === user!.userId)) || s.characters[0];
+      if (c) {
+        a.character = c.id;
+      }
+    }
+    if (!c && s.characters.length === 0) {
+      const defaultHero: Character = {
+        ...newCharacter(),
+        id: a.character || `hero-${Date.now()}`,
+        owner: user.userId,
+        name: 'Aventureiro',
+        x: 4,
+        y: 6
+      };
+      s.characters.push(defaultHero);
+      c = defaultHero;
+      a.character = c.id;
+    }
     const own = () => {
       if (!c) throw Error('Personagem não encontrado.');
       if (isMmo) {
@@ -855,6 +874,22 @@ export async function POST(req: NextRequest) {
         } else {
           // Peaceful village hub
           s.enemies = [];
+        }
+
+        if (s.enemies.length > 0) {
+          s.combat = true;
+          s.round = 1;
+          for (const char of s.characters) char.initiative = d20().raw + mod(char.stats[1]) + 3 - 2 * char.exhaustion;
+          for (const enemy of s.enemies) enemy.initiative = d20().raw + 1;
+          s.order = [...s.characters.filter((x) => x.hp > 0), ...s.enemies.filter((e) => e.hp > 0)]
+            .sort((a, b) => b.initiative - a.initiative || a.id.localeCompare(b.id))
+            .map((x) => x.id);
+          s.turn = 0;
+          s.actionUsed = false;
+        } else {
+          s.combat = false;
+          s.order = [];
+          s.actionUsed = false;
         }
 
         if (s.biome === 'dungeon' || s.location === 2) {

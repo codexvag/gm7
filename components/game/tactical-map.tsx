@@ -809,7 +809,7 @@ export function TacticalMap({
                       } else if (canMove && activeHero && isWalkable) {
                         if (!isCombat && activePath.length > 1) {
                           onMoveHeroPath?.(activeHero.id, activePath);
-                          animateHeroPath(activeHero.id, activePath, true);
+                          animateHeroPath(activeHero.id, activePath, false);
                         } else {
                           onMoveHero(activeHero.id, x, y);
                         }
@@ -824,14 +824,14 @@ export function TacticalMap({
                         if (!isCombat) {
                           if (activePath.length > 1) {
                             onMoveHeroPath?.(activeHero.id, activePath);
-                            animateHeroPath(activeHero.id, activePath, true);
+                            animateHeroPath(activeHero.id, activePath, false);
                           } else {
                             onMoveHero(activeHero.id, x, y);
                           }
                         } else if (pathStepCount > 0 && isPathAffordable) {
                           if (activePath.length > 1) {
                             onMoveHeroPath?.(activeHero.id, activePath);
-                            animateHeroPath(activeHero.id, activePath, true);
+                            animateHeroPath(activeHero.id, activePath, false);
                           } else {
                             onMoveHero(activeHero.id, x, y);
                           }

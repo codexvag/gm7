@@ -91,7 +91,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Register socket with the room DO
-  roomDo.handleConnection(serverWs, userId);
+  await roomDo.handleConnection(serverWs, userId);
 
   return new Response(null, {
     status: 101,

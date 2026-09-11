@@ -276,7 +276,12 @@ export default function Game() {
       if (newRoom.version < prev.version) return prev; // Do not apply older snapshot
 
       const now = Date.now();
-      const protectedChars = (newRoom.state?.characters || []).map((char: Character) => {
+      const incomingChars = newRoom.state?.characters || [];
+      const charsToUse = (incomingChars.length === 0 && (prev.state?.characters?.length || 0) > 0)
+        ? prev.state.characters
+        : incomingChars;
+
+      const protectedChars = charsToUse.map((char: Character) => {
         const shield = localMoveShieldRef.current[char.id];
         if (shield && now - shield.time < 2000) {
           if (char.x === shield.x && char.y === shield.y) {
@@ -490,19 +495,21 @@ export default function Game() {
 
               case 'MOVE_REJECTED': {
                 setError(msg.reason || 'Movimento rejeitado pelo servidor.');
-                // Revert to server-authoritative original position
-                setRoom((prev) => {
-                  if (!prev) return prev;
-                  return {
-                    ...prev,
-                    state: {
-                      ...prev.state,
-                      characters: prev.state.characters.map((c) =>
-                        c.id === msg.characterId ? { ...c, x: msg.originalPos.x, y: msg.originalPos.y } : c
-                      )
-                    }
-                  };
-                });
+                // Revert to server-authoritative original position only if valid non-zero
+                if (msg.originalPos && (msg.originalPos.x > 0 || msg.originalPos.y > 0)) {
+                  setRoom((prev) => {
+                    if (!prev) return prev;
+                    return {
+                      ...prev,
+                      state: {
+                        ...prev.state,
+                        characters: prev.state.characters.map((c) =>
+                          c.id === msg.characterId ? { ...c, x: msg.originalPos.x, y: msg.originalPos.y } : c
+                        )
+                      }
+                    };
+                  });
+                }
                 break;
               }
 
@@ -1596,12 +1603,25 @@ export default function Game() {
 
                       // 4. Authoritative WebSocket dispatch with REST fallback
                       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                        const hero = state?.characters.find((c) => c.id === heroId);
+                        const waypoints: { x: number; y: number }[] = [];
+                        if (hero) {
+                          let cx = hero.x;
+                          let cy = hero.y;
+                          while (cx !== x || cy !== y) {
+                            cx += Math.sign(x - cx);
+                            cy += Math.sign(y - cy);
+                            waypoints.push({ x: cx, y: cy });
+                          }
+                        }
+                        if (waypoints.length === 0) waypoints.push({ x, y });
+
                         wsRef.current.send(
                           JSON.stringify({
                             type: 'MOVE_PATH',
                             roomId: room?.id,
                             characterId: heroId,
-                            waypoints: [{ x, y }],
+                            waypoints,
                             seq: ++clientSeqRef.current,
                             maxBound: curGrid - 1,
                             gridSize: curGrid

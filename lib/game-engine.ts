@@ -1372,6 +1372,35 @@ export function validateWaypointPath(
 
     // Step must be contiguous (Chebyshev distance <= 1)
     if (dx > 1 || dy > 1) {
+      if (!state.combat || waypoints.length === 1) {
+        // Expand/interpolate intermediate steps to reach destination
+        let cx = currentPos.x;
+        let cy = currentPos.y;
+        let blocked = false;
+        while (cx !== wp.x || cy !== wp.y) {
+          const stepX = Math.sign(wp.x - cx);
+          const stepY = Math.sign(wp.y - cy);
+          cx += stepX;
+          cy += stepY;
+          if (isGridTileWalkable(biome, cx, cy, effectiveGridSize, customPolygons)) {
+            steps.push({ x: cx, y: cy });
+          } else {
+            blocked = true;
+            break;
+          }
+        }
+        if (blocked && steps.length === 0) {
+          return {
+            valid: false,
+            reason: `Caminho bloqueado por obstáculo ou terreno intransponível em (${cx}, ${cy}).`,
+            finalPos: currentPos,
+            distance: steps.length,
+            validatedWaypoints: steps
+          };
+        }
+        currentPos = steps.length > 0 ? steps[steps.length - 1] : currentPos;
+        continue;
+      }
       return {
         valid: false,
         reason: `Passo não contíguo detectado de (${currentPos.x}, ${currentPos.y}) para (${wp.x}, ${wp.y}). Saltos de mais de 1 quadrado não são permitidos.`,

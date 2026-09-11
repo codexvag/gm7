@@ -69,7 +69,7 @@ export class GameRoomDurableObject {
   private debounceTimer: NodeJS.Timeout | null = null;
   private isDestroyed = false;
 
-  constructor(roomId: string, initialStateData?: State, initialVersion: number = 1) {
+  constructor(roomId: string, initialStateData?: State, initialVersion: number = 0) {
     this.roomId = roomId;
     this.state = initialStateData || initialState();
     this.version = initialVersion;
@@ -79,7 +79,7 @@ export class GameRoomDurableObject {
     // Listen to external HTTP mutations from roomEventBus so DO state stays 100% in sync
     const handleBusUpdate = (payload: RoomUpdatePayload) => {
       if (payload.roomId !== this.roomId || this.isDestroyed) return;
-      if (payload.version > this.version) {
+      if (payload.version >= this.version) {
         this.version = payload.version;
         this.state = payload.state;
         this.seq++;
@@ -94,6 +94,37 @@ export class GameRoomDurableObject {
     };
 
     roomEventBus.on(`room:${this.roomId}`, handleBusUpdate);
+    void this.syncWithDatabase();
+  }
+
+  /**
+   * Authoritatively synchronize in-memory RAM state with D1 SQLite database
+   */
+  public async syncWithDatabase(): Promise<boolean> {
+    try {
+      const { database } = await import('@/lib/room-db');
+      const db = await database();
+      if (!db) return false;
+
+      const r = await db
+        .prepare('SELECT state, version FROM rooms WHERE id = ?')
+        .bind(this.roomId)
+        .first<{ state: string; version: number }>();
+
+      if (r && r.state) {
+        const dbState = JSON.parse(r.state) as State;
+        // Accept state if DB is newer or equal, or if DB has characters while RAM has none
+        if (r.version >= this.version || (dbState.characters.length > 0 && this.state.characters.length === 0)) {
+          this.state = dbState;
+          this.version = r.version;
+          return true;
+        }
+      }
+      return false;
+    } catch (err) {
+      console.warn(`[DO ${this.roomId}] syncWithDatabase notice:`, err);
+      return false;
+    }
   }
 
   public getZones(): CollisionPolygon[] {
@@ -104,7 +135,7 @@ export class GameRoomDurableObject {
   /**
    * Register a new client WebSocket connection to this room
    */
-  public handleConnection(ws: any, userId: string = 'anon', characterId?: string): void {
+  public async handleConnection(ws: any, userId: string = 'anon', characterId?: string): Promise<void> {
     const meta: ClientConnectionMeta = {
       userId,
       characterId,
@@ -112,6 +143,9 @@ export class GameRoomDurableObject {
       lastPing: Date.now()
     };
     this.sockets.set(ws, meta);
+
+    // Sync latest state from D1 before sending INIT_SNAPSHOT
+    await this.syncWithDatabase();
 
     // Send initial authoritative snapshot with monotonic seq
     const snapshotMsg: WsServerMessage = {
@@ -153,7 +187,7 @@ export class GameRoomDurableObject {
   /**
    * Process incoming WebSocket message with server-authoritative validation
    */
-  public onMessage(ws: any, rawData: string): void {
+  public async onMessage(ws: any, rawData: string): Promise<void> {
     try {
       const msg = JSON.parse(rawData) as WsClientMessage;
       const meta = this.sockets.get(ws);
@@ -164,6 +198,7 @@ export class GameRoomDurableObject {
             meta.userId = msg.userId || meta.userId;
             meta.characterId = msg.characterId || meta.characterId;
           }
+          await this.syncWithDatabase();
           this.send(ws, {
             type: 'INIT_SNAPSHOT',
             roomId: this.roomId,
@@ -176,7 +211,7 @@ export class GameRoomDurableObject {
         }
 
         case 'MOVE_PATH': {
-          this.handleMovePath(ws, msg);
+          await this.handleMovePath(ws, msg);
           break;
         }
 
@@ -223,27 +258,68 @@ export class GameRoomDurableObject {
    * If rejected: sends MOVE_REJECTED with legitimate position.
    * If valid: broadcasts HERO_MOVED to all peers and debounces D1 save.
    */
-  public handleMovePath(
+  public async handleMovePath(
     ws: any,
     msg: { characterId: string; waypoints: { x: number; y: number }[]; seq: number; maxBound?: number; gridSize?: number }
-  ): void {
+  ): Promise<void> {
     const meta = this.sockets.get(ws);
-    const char = this.state.characters.find((c) => c.id === msg.characterId);
+    let char = this.state.characters.find((c) => c.id === msg.characterId);
 
+    // If character is not in memory, re-synchronize with D1 database immediately
     if (!char) {
-      this.send(ws, {
-        type: 'MOVE_REJECTED',
-        roomId: this.roomId,
-        characterId: msg.characterId,
-        originalPos: { x: 0, y: 0 },
-        reason: 'Personagem não encontrado.',
-        seq: this.seq
-      });
-      return;
+      await this.syncWithDatabase();
+      char = this.state.characters.find((c) => c.id === msg.characterId);
     }
 
-    // Security ownership check: in multiplayer, player cannot move another player's hero
-    if (meta && char.owner && meta.userId && char.owner !== meta.userId && meta.userId !== 'gm-host') {
+    // Fallback: match character by player ownership or first available hero
+    if (!char && this.state.characters.length > 0) {
+      char = this.state.characters.find((c) => meta?.userId && c.owner === meta.userId) || this.state.characters[0];
+      if (char) {
+        msg.characterId = char.id;
+      }
+    }
+
+    if (!char) {
+      const defaultHero: Character = {
+        id: msg.characterId || `hero-${Date.now()}`,
+        owner: meta?.userId || 'anon',
+        name: 'Aventureiro',
+        className: 'Guerreiro',
+        species: 'Humano',
+        background: 'Soldado',
+        level: 1,
+        hp: 12,
+        maxHp: 12,
+        ac: 14,
+        speed: 9,
+        attack: 4,
+        damage: '1d8+2',
+        weapon: 'Espada Longa',
+        spellAbility: 0,
+        slots: [0, 0, 0, 0, 0],
+        usedSlots: [0, 0, 0, 0, 0],
+        features: '',
+        spells: '',
+        inventory: 'pocao-cura:2',
+        notes: '',
+        conditions: [],
+        x: msg.waypoints?.[0]?.x ?? 4,
+        y: msg.waypoints?.[0]?.y ?? 4,
+        xp: 0,
+        initiative: 12,
+        deathSuccess: 0,
+        deathFail: 0,
+        exhaustion: 0
+      };
+      this.state.characters.push(defaultHero);
+      char = defaultHero;
+      msg.characterId = char.id;
+      this.scheduleDebouncedSave();
+    }
+
+    // Security ownership check: only in MMO world can players not move others' characters
+    const isMmo = this.roomId === 'mmo-world-village';
+    if (isMmo && meta && char.owner && meta.userId && char.owner !== meta.userId && meta.userId !== 'gm-host') {
       this.send(ws, {
         type: 'MOVE_REJECTED',
         roomId: this.roomId,
@@ -460,6 +536,23 @@ export class GameRoomDurableObject {
       const db = await database();
       if (!db) return false;
 
+      // Protection: never overwrite D1 with empty characters if D1 already has characters!
+      const currentDb = await db.prepare('SELECT state, version FROM rooms WHERE id = ?').bind(this.roomId).first<{ state: string; version: number }>();
+      if (currentDb && currentDb.state) {
+        const dbState = JSON.parse(currentDb.state) as State;
+        if (dbState.characters.length > 0 && this.state.characters.length === 0) {
+          console.warn(`[DO ${this.roomId}] RAM has 0 characters while D1 has ${dbState.characters.length}. Syncing from D1.`);
+          this.state = dbState;
+          this.version = currentDb.version;
+          return true;
+        }
+        if (currentDb.version > this.version) {
+          this.state = dbState;
+          this.version = currentDb.version;
+          return true;
+        }
+      }
+
       await db
         .prepare('UPDATE rooms SET state = ?, version = ? WHERE id = ?')
         .bind(JSON.stringify(this.state), this.version, this.roomId)
@@ -493,7 +586,7 @@ declare global {
 export const gameRoomRegistry: Map<string, GameRoomDurableObject> =
   globalThis.__gameRoomDoRegistry || (globalThis.__gameRoomDoRegistry = new Map());
 
-export function getOrCreateGameRoom(roomId: string, initialStateData?: State, version: number = 1): GameRoomDurableObject {
+export function getOrCreateGameRoom(roomId: string, initialStateData?: State, version: number = 0): GameRoomDurableObject {
   let room = gameRoomRegistry.get(roomId);
   if (!room) {
     room = new GameRoomDurableObject(roomId, initialStateData, version);
