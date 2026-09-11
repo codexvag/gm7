@@ -140,20 +140,43 @@ export async function GET(req: NextRequest) {
       : [{ id: MMO_ROOM_ID, name: MMO_ROOM_NAME }, ...userRooms];
 
     const targetId = requestedId || (userRooms[0] ? (userRooms[0].id as string) : null);
-    if (!targetId) return withUserSession(NextResponse.json({ signedIn: true, user: user.userId, rooms: roomList }), user);
-    let room = await db
-      .prepare('SELECT r.* FROM rooms r JOIN members m ON m.room=r.id WHERE r.id=? AND m.user=?')
-      .bind(targetId, user.userId)
-      .first<Room>();
-    if (!room && targetId === MMO_ROOM_ID) {
-      await db.prepare('INSERT OR IGNORE INTO members(room,user) VALUES(?,?)')
-        .bind(MMO_ROOM_ID, user.userId)
-        .run();
-      room = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(MMO_ROOM_ID).first<Room>();
+    let room: Room | null = null;
+    if (targetId) {
+      room = await db
+        .prepare('SELECT r.* FROM rooms r JOIN members m ON m.room=r.id WHERE r.id=? AND m.user=?')
+        .bind(targetId, user.userId)
+        .first<Room>();
+
+      if (!room) {
+        const existing = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(targetId).first<Room>();
+        if (existing) {
+          await db.prepare('INSERT OR IGNORE INTO members(room,user) VALUES(?,?)')
+            .bind(targetId, user.userId)
+            .run();
+          room = existing;
+        }
+      }
     }
+
+    if (!room && userRooms[0]) {
+      room = await db
+        .prepare('SELECT r.* FROM rooms r JOIN members m ON m.room=r.id WHERE r.id=? AND m.user=?')
+        .bind(userRooms[0].id, user.userId)
+        .first<Room>();
+    }
+
     if (!room) {
-      if (requestedId) return withUserSession(NextResponse.json({ error: 'Mesa não encontrada.' }, { status: 404 }), user);
-      return withUserSession(NextResponse.json({ signedIn: true, user: user.userId, rooms: roomList }), user);
+      const id = requestedId || crypto.randomUUID();
+      const code = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
+      const name = 'Vila do Rio Verde';
+      const freshState = initialState();
+      await db.batch([
+        db.prepare('INSERT OR REPLACE INTO rooms(id,owner,name,state,code,version) VALUES(?,?,?,?,?,?)')
+          .bind(id, user.userId, name, JSON.stringify(freshState), code, 0),
+        db.prepare('INSERT OR IGNORE INTO members(room,user) VALUES(?,?)')
+          .bind(id, user.userId)
+      ]);
+      room = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(id).first<Room>();
     }
     return withUserSession(NextResponse.json({
       signedIn: true,
@@ -247,16 +270,61 @@ export async function POST(req: NextRequest) {
         .run();
     }
 
-    const r = await db
-      .prepare('SELECT r.* FROM rooms r JOIN members m ON m.room=r.id WHERE r.id=? AND m.user=?')
-      .bind(a.room, user.userId)
-      .first<Room>();
-    if (!r) return withUserSession(NextResponse.json({ error: 'Mesa não encontrada.' }, { status: 404 }), user);
-    if (a.version !== undefined && r.version !== a.version) {
-      return withUserSession(NextResponse.json({ error: 'A mesa mudou. Os dados foram atualizados; tente sua ação novamente.' }, { status: 409 }), user);
+    const requestedRoomId = typeof a.room === 'string' && a.room.trim() ? a.room.trim() : null;
+    let r: Room | null = null;
+
+    if (requestedRoomId) {
+      r = await db
+        .prepare('SELECT r.* FROM rooms r JOIN members m ON m.room=r.id WHERE r.id=? AND m.user=?')
+        .bind(requestedRoomId, user.userId)
+        .first<Room>();
+
+      if (!r) {
+        const existing = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(requestedRoomId).first<Room>();
+        if (existing) {
+          await db.prepare('INSERT OR IGNORE INTO members(room,user) VALUES(?,?)')
+            .bind(requestedRoomId, user.userId)
+            .run();
+          r = existing;
+        }
+      }
     }
 
-    const s: State = JSON.parse(r.state);
+    if (!r) {
+      // Look for any existing room the user is a member of
+      r = await db
+        .prepare('SELECT r.* FROM rooms r JOIN members m ON m.room=r.id WHERE m.user=? ORDER BY r.rowid DESC')
+        .bind(user.userId)
+        .first<Room>();
+    }
+
+    if (!r) {
+      // Auto-create room for the user to guarantee it exists
+      const id = requestedRoomId || crypto.randomUUID();
+      const code = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
+      const name = 'Vila do Rio Verde';
+      const freshState = initialState();
+      await db.batch([
+        db.prepare('INSERT OR REPLACE INTO rooms(id,owner,name,state,code,version) VALUES(?,?,?,?,?,?)')
+          .bind(id, user.userId, name, JSON.stringify(freshState), code, 0),
+        db.prepare('INSERT OR IGNORE INTO members(room,user) VALUES(?,?)')
+          .bind(id, user.userId)
+      ]);
+      r = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(id).first<Room>();
+    }
+
+    if (!r) {
+      return withUserSession(NextResponse.json({ error: 'Mesa indisponível no momento.' }, { status: 503 }), user);
+    }
+
+    if (a.version !== undefined && r.version !== a.version && a.action !== 'character') {
+      return withUserSession(NextResponse.json({
+        error: 'A mesa mudou. Os dados foram atualizados; tente sua ação novamente.',
+        room: { ...r, state: JSON.parse(r.state) }
+      }, { status: 409 }), user);
+    }
+
+    let s: State = JSON.parse(r.state);
     const isMmo = r.id === 'mmo-world-village';
     const owner = isMmo || r.owner === user.userId;
     const c = s.characters.find((c) => c.id === a.character);
@@ -1070,13 +1138,40 @@ export async function POST(req: NextRequest) {
     }
 
     s.logs = s.logs.slice(-200);
-    const result = await db
+    let result = await db
       .prepare('UPDATE rooms SET state=?,version=version+1 WHERE id=? AND version=?')
       .bind(JSON.stringify(s), r.id, r.version)
       .run();
 
     if (!result.meta.changes) {
-      return withUserSession(NextResponse.json({ error: 'Outra ação chegou primeiro. Atualize e tente novamente.' }, { status: 409 }), user);
+      if (a.action === 'character') {
+        const fresh = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(r.id).first<Room>();
+        if (fresh) {
+          const freshState: State = JSON.parse(fresh.state);
+          const rawChar = (a.value || a.character) as Character;
+          let nextChar = validateCharacter(rawChar);
+          nextChar = calculateEquippedStats(nextChar);
+          const existingIdx = freshState.characters.findIndex((x) => x.id === nextChar.id);
+          if (existingIdx >= 0) {
+            freshState.characters[existingIdx] = { ...nextChar, id: freshState.characters[existingIdx].id, owner: freshState.characters[existingIdx].owner };
+          } else {
+            freshState.characters.push({ ...nextChar, id: nextChar.id || crypto.randomUUID(), owner: user!.userId });
+          }
+          freshState.logs.push(entry(`${nextChar.name} entrou na aventura.`, 'system'));
+          freshState.logs = freshState.logs.slice(-200);
+          await db.prepare('UPDATE rooms SET state=?,version=version+1 WHERE id=?')
+            .bind(JSON.stringify(freshState), fresh.id)
+            .run();
+          r = fresh;
+          s = freshState;
+        }
+      } else {
+        const latest = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(r.id).first<Room>();
+        return withUserSession(NextResponse.json({
+          error: 'Outra ação chegou primeiro. Atualize e tente novamente.',
+          room: latest ? { ...latest, state: JSON.parse(latest.state) } : undefined
+        }, { status: 409 }), user);
+      }
     }
 
     const updatedRoom: Room = {

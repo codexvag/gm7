@@ -305,7 +305,13 @@ export default function Game() {
     try {
       const r = await fetch('/api/game' + (id ? '?room=' + encodeURIComponent(id) : ''));
       const d = (await r.json()) as ApiData;
-      if (!r.ok) throw Error(d.error);
+      if (!r.ok) {
+        if (id) {
+          console.warn(`Mesa ${id} não pôde ser carregada (${d.error}), carregando mesa padrão.`);
+          return await load();
+        }
+        throw Error(d.error);
+      }
       if (!d.signedIn) {
         if (typeof window !== 'undefined') {
           window.location.href = '/signin-with-chatgpt?return_to=' + encodeURIComponent(window.location.pathname);
@@ -340,10 +346,13 @@ export default function Game() {
       return d;
     } catch (e) {
       console.warn('Sync notice:', e);
+      if (id) {
+        return await load();
+      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applyProtectedRoomState]);
 
   useEffect(() => {
     void load();
@@ -631,8 +640,14 @@ export default function Game() {
         });
         const d = (await r.json()) as ApiData;
         if (!r.ok) {
-          if (r.status === 409) await load(curRoom?.id);
-          throw Error(d.error);
+          if (r.status === 409) {
+            if (d.room) {
+              applyProtectedRoomState(d.room);
+            } else {
+              await load(curRoom?.id);
+            }
+          }
+          throw Error(d.error || 'Erro ao sincronizar com a mesa.');
         }
         if (d.room) {
           applyProtectedRoomState(d.room);
@@ -1239,9 +1254,10 @@ export default function Game() {
             onClose={() => setShowCharacterCreator(false)}
             busy={busy}
             onSave={async (newHero) => {
+              setShowCharacterCreator(false);
+              setSelected(newHero.id);
               const res = await action({ action: 'character', value: newHero });
               if (res) {
-                setShowCharacterCreator(false);
                 setSelected(newHero.id);
                 void narrate('', `${newHero.name}, um ${newHero.species} ${newHero.className} de nível ${newHero.level}, juntou-se à aventura na abadia!`);
               }
@@ -2562,22 +2578,6 @@ export default function Game() {
             </div>
           </DialogContent>
         </Dialog>
-      )}
-
-      {/* 5e Character Creator & Builder Modal */}
-      {showCharacterCreator && (
-        <CharacterCreator
-          isOpen={showCharacterCreator}
-          onClose={() => setShowCharacterCreator(false)}
-          onSave={async (newHero) => {
-            const ok = await action({ action: 'character', value: newHero });
-            if (ok) {
-              setShowCharacterCreator(false);
-              setSelected(newHero.id);
-            }
-          }}
-          busy={busy}
-        />
       )}
     </SidebarProvider>
   );
