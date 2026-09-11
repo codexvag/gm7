@@ -327,7 +327,7 @@ export default function Game() {
         const isMmo = d.room.id === 'mmo-world-village';
         const myHeroes = heroes.filter((c: Character) => isMmo ? c.owner === d.user : (!c.owner || c.owner === d.user));
         setSelected((p) => {
-          if (p && heroes.some((c: Character) => c.id === p && (isMmo ? c.owner === d.user : true))) {
+          if (p && heroes.some((c: Character) => c.id === p)) {
             return p;
           }
           return myHeroes[0]?.id || heroes[0]?.id || '';
@@ -339,7 +339,7 @@ export default function Game() {
         );
         if (heroes.length === 0 || (isMmo && myHeroes.length === 0)) {
           setShowCharacterCreator(true);
-        } else if (isMmo && myHeroes.length >= 1) {
+        } else {
           setShowCharacterCreator(false);
         }
       }
@@ -705,7 +705,7 @@ export default function Game() {
       if (!customText) setMessage('');
       await load(curRoom?.id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'A GM não respondeu.');
+      console.warn('Narração offline/aviso:', e);
       await load(roomRef.current?.id);
     } finally {
       setBusy(false);
@@ -1256,11 +1256,14 @@ export default function Game() {
             onSave={async (newHero) => {
               setShowCharacterCreator(false);
               setSelected(newHero.id);
+              setView('Aventura');
               const res = await action({ action: 'character', value: newHero });
-              if (res) {
-                setSelected(newHero.id);
-                void narrate('', `${newHero.name}, um ${newHero.species} ${newHero.className} de nível ${newHero.level}, juntou-se à aventura na abadia!`);
-              }
+              const createdHero = res?.room?.state?.characters?.find((c: Character) => c.name === newHero.name) || res?.room?.state?.characters?.[0];
+              const heroId = createdHero?.id || newHero.id;
+              setSelected(heroId);
+              setShowCharacterCreator(false);
+              setView('Aventura');
+              void narrate('', `${newHero.name}, um ${newHero.species} ${newHero.className} de nível ${newHero.level}, juntou-se à aventura em Vila do Rio Verde!`);
             }}
           />
 

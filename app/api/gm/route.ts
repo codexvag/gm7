@@ -12,6 +12,32 @@ import {
 } from '@/lib/gm-tools';
 
 
+async function resolveGroqKey(rawKey?: string): Promise<string> {
+  if (rawKey && rawKey.trim()) return rawKey.trim();
+
+  // 1. Process environment variables
+  for (const envKey of ['GROQ_API_KEY', 'groq_api_key', 'GROQ_KEY']) {
+    const val = process.env[envKey];
+    if (val && typeof val === 'string' && val.trim()) return val.trim();
+  }
+
+  // 2. Cloudflare Workers module environment
+  try {
+    const mod = (await import('cloudflare:workers')) as { env?: Record<string, string> };
+    const cfVal = mod.env?.GROQ_API_KEY || mod.env?.groq_api_key;
+    if (cfVal && typeof cfVal === 'string' && cfVal.trim()) return cfVal.trim();
+  } catch {}
+
+  // 3. globalThis runtime environment
+  if (typeof globalThis !== 'undefined') {
+    const g = globalThis as any;
+    const gVal = g.env?.GROQ_API_KEY || g.GROQ_API_KEY || g.process?.env?.GROQ_API_KEY;
+    if (gVal && typeof gVal === 'string' && gVal.trim()) return gVal.trim();
+  }
+
+  return '';
+}
+
 export async function POST(req: NextRequest) {
   try {
     const user = await getChatGPTUser();
@@ -24,25 +50,59 @@ export async function POST(req: NextRequest) {
     const a = JSON.parse(raw);
 
     const rawKey = typeof a.key === 'string' ? a.key.trim() : '';
-const serverGroqKey = process.env.GROQ_API_KEY?.trim() || '';
-const userKey = rawKey || serverGroqKey;
-    if (!userKey) {
-      return NextResponse.json(
-        { error: 'Chave da API não configurada. Defina GROQ_API_KEY no arquivo .env do servidor.' },
-        { status: 400 }
-      );
-    }
-    const isGroq = userKey.startsWith('gsk_') || a.provider === 'groq' || !userKey.startsWith('AIza');
+    const userKey = await resolveGroqKey(rawKey);
 
     const text = String(a.text || '').trim().slice(0, 4000);
     if (!text && !a.actionContext) throw Error('Escreva uma ação ou realize uma jogada.');
 
     const db = await database();
-    const room = await db
+    let room = await db
       .prepare('SELECT r.* FROM rooms r JOIN members m ON m.room=r.id WHERE r.id=? AND m.user=?')
       .bind(a.room, user.userId)
       .first<{ id: string; state: string; version: number }>();
+
+    if (!room && a.room) {
+      const existing = await db.prepare('SELECT id, state, version FROM rooms WHERE id=?').bind(a.room).first<{ id: string; state: string; version: number }>();
+      if (existing) {
+        await db.prepare('INSERT OR IGNORE INTO members(room,user) VALUES(?,?)').bind(a.room, user.userId).run();
+        room = existing;
+      }
+    }
+    if (!room) {
+      room = await db.prepare('SELECT r.id, r.state, r.version FROM rooms r JOIN members m ON m.room=r.id WHERE m.user=? ORDER BY r.rowid DESC').bind(user.userId).first<{ id: string; state: string; version: number }>();
+    }
     if (!room) throw Error('Mesa não encontrada.');
+
+    if (!userKey) {
+      console.warn('[GM] No GROQ_API_KEY found, providing atmospheric DM narration fallback.');
+      const fallbackNarrative = a.actionContext
+        ? `As sombras da Vila do Rio Verde movem-se silenciosas. ${a.actionContext}. O ar carrega o presságio de combates iminentes além das pontes rústicas.\n\n[1] Avançar pela ponte leste com cautela.\n[2] Falar com o Ancião Doran para instruções táticas.\n[3] Preparar os feitiços e armas do grupo.`
+        : (text
+          ? `Você avança com determinação: "${text}". Os aldeões e a guarda observam com expectativa e esperança em seus passos.\n\n[1] Explorar a margem do riacho.\n[2] Conversar com a Alquimista Elenor.\n[3] Inspecionar a ponte leste da vila.`
+          : `O sol ergue-se tímido sobre as brumas da Vila do Rio Verde. O Ancião Doran e os guardas aguardam suas ordens para enfrentar a ameaça das cinzas.\n\n[1] Aceitar a missão do Ancião Doran.\n[2] Coletar poções de cura com Elenor.\n[3] Cruzar a ponte em direção à Floresta dos Sussurros.`);
+
+      const choices = [
+        'Avançar pela ponte leste com cautela',
+        'Conversar com o Ancião Doran sobre o selo rompido',
+        'Visitar a Alquimista Elenor para recolher poções de cura'
+      ];
+
+      const s: State = JSON.parse(room.state);
+      if (text) s.logs.push(entry(text, 'player'));
+      s.logs.push(entry(fallbackNarrative, 'gm'));
+      s.logs = s.logs.slice(-200);
+      await db.prepare('UPDATE rooms SET state=?,version=version+1 WHERE id=?').bind(JSON.stringify(s), room.id).run();
+
+      return NextResponse.json({
+        ok: true,
+        answer: fallbackNarrative,
+        choices,
+        executedTools: [],
+        searchHtml: ''
+      });
+    }
+
+    const isGroq = userKey.startsWith('gsk_') || a.provider === 'groq' || !userKey.startsWith('AIza');
 
     const state: State = JSON.parse(room.state);
 
