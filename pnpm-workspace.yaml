@@ -1,4 +1,5 @@
-allowBuilds:
+﻿allowBuilds:
+  better-sqlite3: true
   esbuild: true
   sharp: true
   unrs-resolver: true
@@ -13,3 +14,4 @@ minimumReleaseAgeExclude:
   - miniflare@5.20260911.0-alpha
   - workerd@1.20260911.1
   - wrangler@4.131.1
+

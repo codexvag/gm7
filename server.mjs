@@ -2,7 +2,7 @@
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import fs from 'fs';
 import { EventEmitter } from 'events';
 
@@ -147,18 +147,18 @@ function createFetchRequest(req) {
 
 app.use(express.json());
 
-app.all('/*splat', async (req, res) => {
+app.all('/{*splat}', async (req, res) => {
   try {
     let handler;
-    const handlerPath = path.join(__dirname, 'dist', 'server', 'fetch-handler.js');
+    const handlerPath = path.join(__dirname, 'dist', 'server', 'index.js');
     if (fs.existsSync(handlerPath)) {
-      handler = (await import(handlerPath)).default;
+      handler = (await import(pathToFileURL(handlerPath).href)).default;
     } else {
       return res.status(404).send('Server build not found.');
     }
     
     const fetchReq = createFetchRequest(req);
-    const fetchRes = await handler.fetch(fetchReq, {}, { waitUntil: (p) => p });
+    const fetchRes = await handler(fetchReq, {}, { waitUntil: (p) => p });
     
     res.status(fetchRes.status);
     for (const [key, value] of fetchRes.headers.entries()) {
@@ -186,4 +186,6 @@ const PORT = process.env.PORT || 10000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[Node Server] Running natively on port ${PORT}`);
 });
+
+
 

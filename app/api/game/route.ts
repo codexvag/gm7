@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import { getChatGPTUser } from '@/app/chatgpt-auth';
 import { database } from '@/lib/room-db';
 import { isOriginAllowed } from '@/lib/auth-origin';
@@ -116,7 +116,7 @@ export async function GET(req: NextRequest) {
         .all();
     }
     const MMO_ROOM_ID = 'mmo-world-village';
-    const MMO_ROOM_NAME = '🌍 Aethelgard: Vila do Rio Verde (Mundo MMO)';
+    const MMO_ROOM_NAME = 'ðŸŒ Aethelgard: Vila do Rio Verde (Mundo MMO)';
 
     const requestedId = req.nextUrl.searchParams.get('room');
 
@@ -206,7 +206,7 @@ export async function GET(req: NextRequest) {
     }), user);
   } catch (err) {
     console.error('[GET /api/game Error]:', err);
-    return NextResponse.json({ error: 'Não foi possível carregar a mesa. Tente novamente.' }, { status: 503 });
+    return NextResponse.json({ error: 'NÃ£o foi possÃ­vel carregar a mesa. Tente novamente.' }, { status: 503 });
   }
 }
 
@@ -216,7 +216,7 @@ export async function POST(req: NextRequest) {
     user = await getChatGPTUser();
     if (!user) return NextResponse.json({ error: 'Entre para salvar sua aventura.' }, { status: 401 });
     if (!isOriginAllowed(req)) {
-      return NextResponse.json({ error: 'Origem inválida.' }, { status: 403 });
+      return NextResponse.json({ error: 'Origem invÃ¡lida.' }, { status: 403 });
     }
     const raw = await req.text();
     if (raw.length > 100000) throw Error('Dados muito grandes.');
@@ -273,7 +273,7 @@ export async function POST(req: NextRequest) {
 
     if (a.action === 'join') {
       const room = await db.prepare('SELECT id FROM rooms WHERE code=?').bind(String(a.code).trim()).first<{ id: string }>();
-      if (!room) throw Error('Código de convite inválido.');
+      if (!room) throw Error('CÃ³digo de convite invÃ¡lido.');
       await db.prepare('INSERT OR IGNORE INTO members(room,user) VALUES(?,?)').bind(room.id, user.userId).run();
       return withUserSession(NextResponse.json({ id: room.id }), user);
     }
@@ -282,7 +282,7 @@ export async function POST(req: NextRequest) {
       const existingMmo = await db.prepare('SELECT id FROM rooms WHERE id=?').bind('mmo-world-village').first();
       if (!existingMmo) {
         await db.prepare('INSERT INTO rooms(id,owner,name,state,code) VALUES(?,?,?,?,?)')
-          .bind('mmo-world-village', 'world_server', '🌍 Aethelgard: Vila do Rio Verde (Mundo MMO)', JSON.stringify(initialState()), 'mmo-village')
+          .bind('mmo-world-village', 'world_server', 'ðŸŒ Aethelgard: Vila do Rio Verde (Mundo MMO)', JSON.stringify(initialState()), 'mmo-village')
           .run();
       }
       await db.prepare('INSERT OR IGNORE INTO members(room,user) VALUES(?,?)')
@@ -334,13 +334,13 @@ export async function POST(req: NextRequest) {
     }
 
     if (!r) {
-      return withUserSession(NextResponse.json({ error: 'Mesa indisponível no momento.' }, { status: 503 }), user);
+      return withUserSession(NextResponse.json({ error: 'Mesa indisponÃ­vel no momento.' }, { status: 503 }), user);
     }
 
     const isMmo = r.id === 'mmo-world-village';
     if (a.version !== undefined && r.version !== a.version && a.action !== 'character' && !isMmo && a.action !== 'move' && a.action !== 'pass' && a.action !== 'location' && a.action !== 'attack' && a.action !== 'check' && a.action !== 'useItem' && a.action !== 'respawn') {
       return withUserSession(NextResponse.json({
-        error: 'A mesa mudou. Os dados foram atualizados; tente sua ação novamente.',
+        error: 'A mesa mudou. Os dados foram atualizados; tente sua aÃ§Ã£o novamente.',
         room: { ...r, state: JSON.parse(r.state) }
       }, { status: 409 }), user);
     }
@@ -375,7 +375,7 @@ export async function POST(req: NextRequest) {
       touchChar(c);
     }
     const own = () => {
-      if (!c) throw Error('Personagem não encontrado.');
+      if (!c) throw Error('Personagem nÃ£o encontrado.');
       if (isMmo) {
         if (c.owner && c.owner !== user!.userId) throw Error('Escolha um personagem seu.');
       } else if (!owner && c.owner !== user!.userId) {
@@ -384,7 +384,7 @@ export async function POST(req: NextRequest) {
       return c;
     };
     const gm = () => {
-      if (!owner && !isMmo) throw Error('Somente o anfitrião pode realizar esta ação.');
+      if (!owner && !isMmo) throw Error('Somente o anfitriÃ£o pode realizar esta aÃ§Ã£o.');
     };
     const log = (text: string, kind: 'gm' | 'roll' | 'player' | 'system' = 'system') =>
       s.logs.push(entry(text, kind));
@@ -425,13 +425,13 @@ export async function POST(req: NextRequest) {
       }
       case 'roll': {
         const result = roll(String(a.formula));
-        log(`${user.displayName}: ${a.formula} → [${result.results.join(', ')}] ${result.bonus ? '+ (' + result.bonus + ') ' : ''}= ${result.total}`, 'roll');
+        log(`${user.displayName}: ${a.formula} â†’ [${result.results.join(', ')}] ${result.bonus ? '+ (' + result.bonus + ') ' : ''}= ${result.total}`, 'roll');
         break;
       }
       case 'check': {
         const p = own();
         const ability = Number(a.ability);
-        if (!Number.isInteger(ability) || ability < 0 || ability > 5) throw Error('Atributo inválido.');
+        if (!Number.isInteger(ability) || ability < 0 || ability > 5) throw Error('Atributo invÃ¡lido.');
         const result = d20(a.mode);
         const bonus =
           mod(p.stats[ability]) +
@@ -443,7 +443,7 @@ export async function POST(req: NextRequest) {
       }
       case 'encounter': {
         gm();
-        if (s.combat) throw Error('Já existe um combate em andamento.');
+        if (s.combat) throw Error('JÃ¡ existe um combate em andamento.');
         if (!s.characters.some((x) => x.hp > 0)) throw Error('Crie um personagem consciente primeiro.');
         s.enemies = [
           {
@@ -476,7 +476,7 @@ export async function POST(req: NextRequest) {
                 const x = [...s.characters, ...s.enemies].find((x) => x.id === id)!;
                 return x.name + ' (' + x.initiative + ')';
               })
-              .join(' • '),
+              .join(' â€¢ '),
           'roll'
         );
         executeEnemyAI(s);
@@ -504,14 +504,14 @@ export async function POST(req: NextRequest) {
           const curTurnId = s.order[s.turn];
           if (curTurnId && curTurnId !== p.id) {
             const activeCreature = [...s.characters, ...s.enemies].find((x) => x.id === curTurnId);
-            throw Error(`Não é o turno de ${p.name}. Turno atual: ${activeCreature ? activeCreature.name : 'Inimigo'}.`);
+            throw Error(`NÃ£o Ã© o turno de ${p.name}. Turno atual: ${activeCreature ? activeCreature.name : 'Inimigo'}.`);
           }
           if (s.actionUsed) {
-            throw Error('Você já utilizou sua Ação neste turno. Mova-se pelo terreno ou clique em "Fim do Turno" para passar a vez.');
+            throw Error('VocÃª jÃ¡ utilizou sua AÃ§Ã£o neste turno. Mova-se pelo terreno ou clique em "Fim do Turno" para passar a vez.');
           }
         }
 
-        if (p.hp <= 0) throw Error('Este personagem está inconsciente.');
+        if (p.hp <= 0) throw Error('Este personagem estÃ¡ inconsciente.');
         const targetId = a.target || a.targetId;
         const target = s.enemies.find((e) => e.id === targetId && e.hp > 0);
         if (!target) throw Error('Escolha um alvo inimigo ativo.');
@@ -519,7 +519,7 @@ export async function POST(req: NextRequest) {
         // Server-Authoritative Spatial Range Validation
         const rangeCheck = validateAttackRange(p, target);
         if (!rangeCheck.inRange) {
-          throw Error(`Alvo fora do alcance da arma (${rangeCheck.distance} quadrados / ${(rangeCheck.distance * 1.5).toFixed(1)}m). Alcance máximo: ${rangeCheck.maxRange} quadrado(s).`);
+          throw Error(`Alvo fora do alcance da arma (${rangeCheck.distance} quadrados / ${(rangeCheck.distance * 1.5).toFixed(1)}m). Alcance mÃ¡ximo: ${rangeCheck.maxRange} quadrado(s).`);
         }
 
         // Server authoritative SRD attack resolution
@@ -537,8 +537,8 @@ export async function POST(req: NextRequest) {
         log(res.text, 'roll');
 
         if (target.hp <= 0) {
-          log(`💀 ${target.name} foi derrotado!`, 'gm');
-          const xpReward = target.name.includes('Malakor') ? 500 : target.name.includes('Guardião') ? 250 : 150;
+          log(`ðŸ’€ ${target.name} foi derrotado!`, 'gm');
+          const xpReward = target.name.includes('Malakor') ? 500 : target.name.includes('GuardiÃ£o') ? 250 : 150;
           if (isMmo) {
             const recipients = p.partyId
               ? s.characters.filter((char) => char.partyId === p.partyId)
@@ -546,12 +546,12 @@ export async function POST(req: NextRequest) {
             for (const char of recipients) {
               char.xp = (char.xp || 0) + xpReward;
             }
-            log(`✨ ${p.partyId ? 'O grupo de ' + p.name : p.name + ' (Solo)'} recebeu +${xpReward} XP pela vitória contra ${target.name}!`, 'gm');
+            log(`âœ¨ ${p.partyId ? 'O grupo de ' + p.name : p.name + ' (Solo)'} recebeu +${xpReward} XP pela vitÃ³ria contra ${target.name}!`, 'gm');
           } else {
             for (const char of s.characters) {
               char.xp = (char.xp || 0) + xpReward;
             }
-            log(`✨ Os heróis receberam +${xpReward} XP pela vitória contra ${target.name}!`, 'gm');
+            log(`âœ¨ Os herÃ³is receberam +${xpReward} XP pela vitÃ³ria contra ${target.name}!`, 'gm');
           }
         }
 
@@ -564,7 +564,7 @@ export async function POST(req: NextRequest) {
           }
           s.combat = false;
           s.actionUsed = false;
-          log('⚔️ Todos os inimigos foram vencidos! Vitória do grupo!', 'gm');
+          log('âš”ï¸ Todos os inimigos foram vencidos! VitÃ³ria do grupo!', 'gm');
         }
 
         // If client specified immediate end of turn, advance
@@ -596,21 +596,21 @@ export async function POST(req: NextRequest) {
           const curTurnId = s.order[s.turn];
           if (curTurnId && curTurnId !== p.id) {
             const activeCreature = [...s.characters, ...s.enemies].find((x) => x.id === curTurnId);
-            throw Error(`Não é o turno de ${p.name}. Turno atual: ${activeCreature ? activeCreature.name : 'Inimigo'}.`);
+            throw Error(`NÃ£o Ã© o turno de ${p.name}. Turno atual: ${activeCreature ? activeCreature.name : 'Inimigo'}.`);
           }
           if (s.actionUsed) {
-            throw Error('Você já utilizou sua Ação neste turno. Mova-se pelo terreno ou clique em "Fim do Turno" para passar a vez.');
+            throw Error('VocÃª jÃ¡ utilizou sua AÃ§Ã£o neste turno. Mova-se pelo terreno ou clique em "Fim do Turno" para passar a vez.');
           }
         }
 
-        if (p.hp <= 0) throw Error('Este personagem está inconsciente.');
+        if (p.hp <= 0) throw Error('Este personagem estÃ¡ inconsciente.');
         const spellLevel = Number(a.spellLevel || 0);
         const spellName = String(a.spellName || 'Magia');
 
         if (spellLevel > 0) {
           const spent = spendSpellSlot(p, spellLevel);
           if (!spent) {
-            throw Error(`Sem espaços de magia de nível ${spellLevel} restantes para ${p.name}!`);
+            throw Error(`Sem espaÃ§os de magia de nÃ­vel ${spellLevel} restantes para ${p.name}!`);
           }
         }
 
@@ -622,7 +622,7 @@ export async function POST(req: NextRequest) {
           // Server-Authoritative Spell Range Validation
           const rangeCheck = validateSpellRange(p, target, spellName);
           if (!rangeCheck.inRange) {
-            throw Error(`Alvo fora do alcance da magia (${rangeCheck.distance} quadrados / ${(rangeCheck.distance * 1.5).toFixed(1)}m). Alcance máximo: ${rangeCheck.maxRange} quadrados.`);
+            throw Error(`Alvo fora do alcance da magia (${rangeCheck.distance} quadrados / ${(rangeCheck.distance * 1.5).toFixed(1)}m). Alcance mÃ¡ximo: ${rangeCheck.maxRange} quadrados.`);
           }
           const dmgFormula = String(a.damageFormula || '1d10');
           const spellAtkBonus = prof(p.level) + mod(p.stats[p.spellAbility || 3]) - 2 * p.exhaustion;
@@ -635,11 +635,11 @@ export async function POST(req: NextRequest) {
           target.hp = res.hpAfter;
           touchChar(target);
           s.actionUsed = true;
-          log(`✨ [${spellName}${spellLevel > 0 ? ' • Nível ' + spellLevel : ' • Truque'}] ${res.text}`, 'roll');
+          log(`âœ¨ [${spellName}${spellLevel > 0 ? ' â€¢ NÃ­vel ' + spellLevel : ' â€¢ Truque'}] ${res.text}`, 'roll');
 
           if (target.hp <= 0) {
-            log(`💀 ${target.name} foi derrotado pela magia!`, 'gm');
-            const xpReward = target.name.includes('Malakor') ? 500 : target.name.includes('Guardião') ? 250 : 150;
+            log(`ðŸ’€ ${target.name} foi derrotado pela magia!`, 'gm');
+            const xpReward = target.name.includes('Malakor') ? 500 : target.name.includes('GuardiÃ£o') ? 250 : 150;
             if (isMmo) {
               const recipients = p.partyId
                 ? s.characters.filter((char) => char.partyId === p.partyId)
@@ -647,12 +647,12 @@ export async function POST(req: NextRequest) {
               for (const char of recipients) {
                 char.xp = (char.xp || 0) + xpReward;
               }
-              log(`✨ ${p.partyId ? 'O grupo de ' + p.name : p.name + ' (Solo)'} recebeu +${xpReward} XP pela vitória contra ${target.name}!`, 'gm');
+              log(`âœ¨ ${p.partyId ? 'O grupo de ' + p.name : p.name + ' (Solo)'} recebeu +${xpReward} XP pela vitÃ³ria contra ${target.name}!`, 'gm');
             } else {
               for (const char of s.characters) {
                 char.xp = (char.xp || 0) + xpReward;
               }
-              log(`✨ Os heróis receberam +${xpReward} XP pela vitória contra ${target.name}!`, 'gm');
+              log(`âœ¨ Os herÃ³is receberam +${xpReward} XP pela vitÃ³ria contra ${target.name}!`, 'gm');
             }
           }
 
@@ -665,11 +665,11 @@ export async function POST(req: NextRequest) {
             }
             s.combat = false;
             s.actionUsed = false;
-            log('⚔️ Todos os inimigos foram vencidos! Vitória do grupo!', 'gm');
+            log('âš”ï¸ Todos os inimigos foram vencidos! VitÃ³ria do grupo!', 'gm');
           }
         } else if (a.healFormula) {
           const targetChar = s.characters.find((c) => c.id === (a.targetId || p.id));
-          if (!targetChar) throw Error('Alvo inválido para cura.');
+          if (!targetChar) throw Error('Alvo invÃ¡lido para cura.');
           const healRoll = roll(a.healFormula);
           const oldHp = targetChar.hp;
           targetChar.hp = Math.min(targetChar.maxHp, targetChar.hp + healRoll.total);
@@ -683,10 +683,10 @@ export async function POST(req: NextRequest) {
             maxHp: targetChar.maxHp
           };
           s.actionUsed = true;
-          log(`✨ ${p.name} conjurou ${spellName} em ${targetChar.name}: [${healRoll.results.join(', ')}] + ${healRoll.bonus} = recuperou ${healed} PV! (${targetChar.hp}/${targetChar.maxHp} PV)`, 'roll');
+          log(`âœ¨ ${p.name} conjurou ${spellName} em ${targetChar.name}: [${healRoll.results.join(', ')}] + ${healRoll.bonus} = recuperou ${healed} PV! (${targetChar.hp}/${targetChar.maxHp} PV)`, 'roll');
         } else {
           s.actionUsed = true;
-          log(`✨ ${p.name} conjurou ${spellName}${spellLevel > 0 ? ' (Espaço de nível ' + spellLevel + ' gasto)' : ''}.`, 'roll');
+          log(`âœ¨ ${p.name} conjurou ${spellName}${spellLevel > 0 ? ' (EspaÃ§o de nÃ­vel ' + spellLevel + ' gasto)' : ''}.`, 'roll');
         }
 
         if (a.endTurn && s.combat) {
@@ -701,7 +701,7 @@ export async function POST(req: NextRequest) {
         const itemId = String(a.itemId || 'pocao-cura');
         const targetId = a.targetId || p.id;
         const targetChar = s.characters.find((x) => x.id === targetId);
-        if (!targetChar) throw Error('Alvo inválido para o item.');
+        if (!targetChar) throw Error('Alvo invÃ¡lido para o item.');
         if (targetChar.id !== p.id && getGridDistance(p, targetChar) > 1) {
           throw Error(`Alvo muito distante para aplicar o item. Alcance de toque: 1 quadrado (1.5m).`);
         }
@@ -709,19 +709,19 @@ export async function POST(req: NextRequest) {
         if (s.combat) {
           const curTurnId = s.order[s.turn];
           if (curTurnId && curTurnId !== p.id) {
-            throw Error(`Não é o turno de ${p.name}. Aguarde sua vez na ordem de iniciativa.`);
+            throw Error(`NÃ£o Ã© o turno de ${p.name}. Aguarde sua vez na ordem de iniciativa.`);
           }
           if (s.actionUsed) {
-            throw Error('Você já utilizou sua Ação neste turno. Mova-se ou passe o turno.');
+            throw Error('VocÃª jÃ¡ utilizou sua AÃ§Ã£o neste turno. Mova-se ou passe o turno.');
           }
           s.actionUsed = true;
         }
 
         let healRoll = { total: 0, results: [0], bonus: 0 };
-        let itemName = 'Poção de Cura';
+        let itemName = 'PoÃ§Ã£o de Cura';
         if (itemId === 'pocao-cura-maior') {
           healRoll = roll('4d4+4');
-          itemName = 'Poção de Cura Maior';
+          itemName = 'PoÃ§Ã£o de Cura Maior';
         } else {
           healRoll = roll('2d4+2');
         }
@@ -762,7 +762,7 @@ export async function POST(req: NextRequest) {
         if (activeChar) {
           if (a.character) {
             const p = own();
-            if (p.id !== activeChar.id) throw Error('Não é seu turno.');
+            if (p.id !== activeChar.id) throw Error('NÃ£o Ã© seu turno.');
           } else {
             if (!isMmo && !owner && activeChar.owner && activeChar.owner !== user.userId) {
               throw Error('Aguarde o jogador ativo passar a vez.');
@@ -771,7 +771,7 @@ export async function POST(req: NextRequest) {
         } else {
           gm();
         }
-        log(`Turno de ${activeChar?.name || c?.name || 'criatura'} concluído.`);
+        log(`Turno de ${activeChar?.name || c?.name || 'criatura'} concluÃ­do.`);
         s.actionUsed = false;
         advance(s);
         executeEnemyAI(s);
@@ -782,7 +782,7 @@ export async function POST(req: NextRequest) {
         s.combat = false;
         s.order = [];
         s.actionUsed = false;
-        log('O anfitrião encerrou o combate.');
+        log('O anfitriÃ£o encerrou o combate.');
         break;
       }
       case 'move': {
@@ -794,14 +794,14 @@ export async function POST(req: NextRequest) {
         const maxBound = Number(a.maxBound ?? defaultBound);
         const validation = validateMovement(p, { x, y }, s, maxBound);
         if (!validation.valid) {
-          throw Error(validation.reason || 'Posição inválida.');
+          throw Error(validation.reason || 'PosiÃ§Ã£o invÃ¡lida.');
         }
 
         // Server-Side Obstacle Collision Validation
         const gridSize = a.gridSize ? Number(a.gridSize) : maxBound + 1;
         const activeZones = getActiveZonesForBiome(biome);
         if (!isGridTileWalkable(biome, x, y, gridSize, activeZones)) {
-          throw Error('Destino intransponível ou bloqueado por obstáculo.');
+          throw Error('Destino intransponÃ­vel ou bloqueado por obstÃ¡culo.');
         }
 
         p.x = x;
@@ -813,7 +813,7 @@ export async function POST(req: NextRequest) {
         break;
       }
       case 'shortRest': {
-        if (s.combat) throw Error('Não é possível descansar em combate.');
+        if (s.combat) throw Error('NÃ£o Ã© possÃ­vel descansar em combate.');
         let logMsg = 'Descanso Curto (1h): ';
         for (const p of s.characters) {
           if (p.hp > 0 && p.hp < p.maxHp) {
@@ -823,14 +823,14 @@ export async function POST(req: NextRequest) {
           }
         }
         if (!logMsg.includes('recuperou')) {
-          logMsg += 'Todos os heróis já estavam com vida máxima.';
+          logMsg += 'Todos os herÃ³is jÃ¡ estavam com vida mÃ¡xima.';
         }
         log(logMsg, 'roll');
         break;
       }
       case 'rest': {
         gm();
-        if (s.combat) throw Error('Não é possível descansar em combate.');
+        if (s.combat) throw Error('NÃ£o Ã© possÃ­vel descansar em combate.');
         for (const p of s.characters) {
           p.hp = p.maxHp;
           p.usedSlots = p.usedSlots.map(() => 0);
@@ -839,26 +839,26 @@ export async function POST(req: NextRequest) {
           p.exhaustion = Math.max(0, p.exhaustion - 1);
           touchChar(p);
         }
-        log('O grupo concluiu um descanso longo (8h). PV e espaços de magia restaurados.', 'roll');
+        log('O grupo concluiu um descanso longo (8h). PV e espaÃ§os de magia restaurados.', 'roll');
         break;
       }
       case 'location': {
         if (s.combat) throw Error('Encerre o combate antes de viajar.');
         const n = Number(a.location);
-        if (!locations[n]) throw Error('Local inválido.');
+        if (!locations[n]) throw Error('Local invÃ¡lido.');
 
-        // ── Progression gating: enforce campaign act order ──
+        // â”€â”€ Progression gating: enforce campaign act order â”€â”€
         if (!s.questProgress) s.questProgress = {};
         const biomeTarget = locations[n].biome;
         if (biomeTarget === 'forest' && !isMmo) {
           // Allow forest after talking to at least one NPC (Doran)
           if (!s.questProgress.doran_talked) {
-            throw Error('Converse com o Ancião Doran na vila antes de partir para a floresta.');
+            throw Error('Converse com o AnciÃ£o Doran na vila antes de partir para a floresta.');
           }
         }
         if (biomeTarget === 'dungeon' && !isMmo) {
           if (!s.questProgress.forest_cleared) {
-            throw Error('Derrote os inimigos da Floresta dos Sussurros antes de descer às Catacumbas.');
+            throw Error('Derrote os inimigos da Floresta dos Sussurros antes de descer Ã s Catacumbas.');
           }
         }
 
@@ -873,7 +873,7 @@ export async function POST(req: NextRequest) {
         }
 
         // Configure enemies appropriate for the destination biome
-        // Enemies are placed but combat does NOT auto-start — exploration first!
+        // Enemies are placed but combat does NOT auto-start â€” exploration first!
         if (s.biome === 'forest') {
           s.enemies = [
             {
@@ -890,7 +890,7 @@ export async function POST(req: NextRequest) {
             },
             {
               id: crypto.randomUUID(),
-              name: 'Cão do Vazio',
+              name: 'CÃ£o do Vazio',
               hp: 7,
               maxHp: 7,
               ac: 10,
@@ -905,7 +905,7 @@ export async function POST(req: NextRequest) {
           s.enemies = [
             {
               id: crypto.randomUUID(),
-              name: 'Guardião Espectral',
+              name: 'GuardiÃ£o Espectral',
               hp: 18,
               maxHp: 18,
               ac: 13,
@@ -929,11 +929,11 @@ export async function POST(req: NextRequest) {
             }
           ];
         } else {
-          // Peaceful village hub — never enemies
+          // Peaceful village hub â€” never enemies
           s.enemies = [];
         }
 
-        // Do NOT auto-start combat — player explores first, attacks to engage
+        // Do NOT auto-start combat â€” player explores first, attacks to engage
         s.combat = false;
         s.order = [];
         s.actionUsed = false;
@@ -947,15 +947,15 @@ export async function POST(req: NextRequest) {
 
         log(`O grupo viajou para ${locations[n].name}. ${locations[n].text}`, 'gm');
         if (s.enemies.length > 0) {
-          log(`⚠️ Criaturas hostis espreitam os arredores. Prepare-se para o combate ou explore a área.`, 'gm');
+          log(`âš ï¸ Criaturas hostis espreitam os arredores. Prepare-se para o combate ou explore a Ã¡rea.`, 'gm');
         }
         break;
       }
       case 'advanceAct': {
         const nextAct = Number(a.act) as 1 | 2 | 3;
-        if (![1, 2, 3].includes(nextAct)) throw Error('Ato inválido.');
+        if (![1, 2, 3].includes(nextAct)) throw Error('Ato invÃ¡lido.');
 
-        // ── Full tactical state reset ──
+        // â”€â”€ Full tactical state reset â”€â”€
         s.location = nextAct - 1;
         s.biome = locations[s.location].biome;
         s.act = nextAct;
@@ -978,12 +978,12 @@ export async function POST(req: NextRequest) {
           s.characters[i].y = 6 + Math.floor(i / 2);
         }
 
-        // Spawn act-appropriate enemies (exploration first — no auto-combat)
+        // Spawn act-appropriate enemies (exploration first â€” no auto-combat)
         if (nextAct === 2) {
           s.enemies = [
             {
               id: crypto.randomUUID(),
-              name: 'Guardião Espectral',
+              name: 'GuardiÃ£o Espectral',
               hp: 18,
               maxHp: 18,
               ac: 13,
@@ -1006,7 +1006,7 @@ export async function POST(req: NextRequest) {
               y: 4
             }
           ];
-          log('O grupo desce às Catacumbas das Três Inscrições (Ato II). O ar cheira a poeira e ozônio arcano. ⚠️ Criaturas hostis espreitam.', 'gm');
+          log('O grupo desce Ã s Catacumbas das TrÃªs InscriÃ§Ãµes (Ato II). O ar cheira a poeira e ozÃ´nio arcano. âš ï¸ Criaturas hostis espreitam.', 'gm');
         } else if (nextAct === 3) {
           s.enemies = [
             {
@@ -1034,7 +1034,7 @@ export async function POST(req: NextRequest) {
               y: 3
             }
           ];
-          log('O grupo alcança o Santuário do Vazio (Ato III). Malakor ergue-se do trono de pedra negra! ⚠️ O confronto final se aproxima.', 'gm');
+          log('O grupo alcanÃ§a o SantuÃ¡rio do Vazio (Ato III). Malakor ergue-se do trono de pedra negra! âš ï¸ O confronto final se aproxima.', 'gm');
         } else {
           s.enemies = [
             {
@@ -1050,7 +1050,7 @@ export async function POST(req: NextRequest) {
               y: 2
             }
           ];
-          log('O grupo retorna ao claustro da superfície (Ato I).', 'gm');
+          log('O grupo retorna ao claustro da superfÃ­cie (Ato I).', 'gm');
         }
         break;
       }
@@ -1095,9 +1095,9 @@ export async function POST(req: NextRequest) {
       case 'levelup': {
         const p = own();
         if (!canLevelUp(p)) {
-          throw Error(`XP insuficiente para subir de nível (${p.xp || 0}/${getXpForNextLevel(p.level)} XP necessários).`);
+          throw Error(`XP insuficiente para subir de nÃ­vel (${p.xp || 0}/${getXpForNextLevel(p.level)} XP necessÃ¡rios).`);
         }
-        if (p.level >= 20) throw Error('Este personagem já atingiu o nível máximo (20).');
+        if (p.level >= 20) throw Error('Este personagem jÃ¡ atingiu o nÃ­vel mÃ¡ximo (20).');
 
         const oldLevel = p.level;
         const newLevel = oldLevel + 1;
@@ -1107,16 +1107,16 @@ export async function POST(req: NextRequest) {
         const classTuple = classes.find((cl) => cl[0] === p.className);
         const hitDieSides = classTuple ? classTuple[1] : 8;
         const conMod = mod(p.stats[2]);
-        // Incremento de PV pela média ou valor fornecido
+        // Incremento de PV pela mÃ©dia ou valor fornecido
         const hpGain = Math.max(1, Math.floor(hitDieSides / 2) + 1 + conMod);
         p.maxHp += hpGain;
         p.hp = Math.min(p.maxHp, p.hp + hpGain);
 
-        // Atualização de espaços de magia para conjuradores
+        // AtualizaÃ§Ã£o de espaÃ§os de magia para conjuradores
         p.slots = getSpellSlotsForClass(p.className, newLevel);
         if (!p.usedSlots) p.usedSlots = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-        // ASI: Aumento no Valor de Atributo (distribuição de 2 pontos nos níveis 4, 8, etc.)
+        // ASI: Aumento no Valor de Atributo (distribuiÃ§Ã£o de 2 pontos nos nÃ­veis 4, 8, etc.)
         if (isAsiLevel(p.className, newLevel) && Array.isArray(a.statIncreases)) {
           for (const statIdx of a.statIncreases) {
             const idx = Number(statIdx);
@@ -1126,11 +1126,11 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Recalcular bônus de proficiência, ataque, CA com os novos atributos e nível
+        // Recalcular bÃ´nus de proficiÃªncia, ataque, CA com os novos atributos e nÃ­vel
         const recalculated = calculateEquippedStats(p);
         Object.assign(p, recalculated);
 
-        log(`🌟 LEVEL UP! ${p.name} alcançou o NÍVEL ${newLevel}! (+${hpGain} PV Máx). Parabéns!`, 'gm');
+        log(`ðŸŒŸ LEVEL UP! ${p.name} alcanÃ§ou o NÃVEL ${newLevel}! (+${hpGain} PV MÃ¡x). ParabÃ©ns!`, 'gm');
         break;
       }
       case 'respawn': {
@@ -1147,7 +1147,7 @@ export async function POST(req: NextRequest) {
         s.location = 0;
         s.biome = 'village';
         s.enemies = [];
-        log(`🕊️ ${hero.name} recuperou a consciência no santuário da Vila do Rio Verde, curado pelas águas e orações.`, 'gm');
+        log(`ðŸ•Šï¸ ${hero.name} recuperou a consciÃªncia no santuÃ¡rio da Vila do Rio Verde, curado pelas Ã¡guas e oraÃ§Ãµes.`, 'gm');
         break;
       }
       case 'chat': {
@@ -1155,7 +1155,7 @@ export async function POST(req: NextRequest) {
         if (!text) throw Error('Mensagem vazia.');
         const senderChar = s.characters.find((ch) => ch.owner === user!.userId || ch.id === a.character);
         const charName = String(a.characterName || (senderChar ? senderChar.name : 'Aventureiro')).slice(0, 50);
-        log(`💬 ${charName}: "${text}"`, 'player');
+        log(`ðŸ’¬ ${charName}: "${text}"`, 'player');
         break;
       }
       case 'partyInvite': {
@@ -1167,10 +1167,10 @@ export async function POST(req: NextRequest) {
         
         const targetId = String(a.targetCharId || a.target || '');
         const targetChar = s.characters.find((ch) => ch.id === targetId);
-        if (!targetChar) throw Error('Aventureiro não encontrado.');
-        if (targetChar.id === senderChar.id) throw Error('Você não pode convidar a si mesmo.');
+        if (!targetChar) throw Error('Aventureiro nÃ£o encontrado.');
+        if (targetChar.id === senderChar.id) throw Error('VocÃª nÃ£o pode convidar a si mesmo.');
         if (targetChar.partyId && senderChar.partyId && targetChar.partyId === senderChar.partyId) {
-          throw Error(`${targetChar.name} já faz parte do seu grupo.`);
+          throw Error(`${targetChar.name} jÃ¡ faz parte do seu grupo.`);
         }
 
         if (!s.partyInvites) s.partyInvites = [];
@@ -1179,7 +1179,7 @@ export async function POST(req: NextRequest) {
 
         const existing = s.partyInvites.find((inv) => inv.fromCharId === senderChar.id && inv.toCharId === targetChar.id);
         if (existing) {
-          throw Error(`Convite já enviado para ${targetChar.name}. Aguarde.`);
+          throw Error(`Convite jÃ¡ enviado para ${targetChar.name}. Aguarde.`);
         }
 
         const invite = {
@@ -1193,7 +1193,7 @@ export async function POST(req: NextRequest) {
           timestamp: now
         };
         s.partyInvites.push(invite);
-        log(`🛡️ ${senderChar.name} convidou ${targetChar.name} para formar um grupo!`, 'player');
+        log(`ðŸ›¡ï¸ ${senderChar.name} convidou ${targetChar.name} para formar um grupo!`, 'player');
         break;
       }
       case 'partyAccept': {
@@ -1206,13 +1206,13 @@ export async function POST(req: NextRequest) {
 
         const inviter = s.characters.find((ch) => ch.id === invite.fromCharId);
         const receiver = s.characters.find((ch) => ch.id === invite.toCharId);
-        if (!inviter || !receiver) throw Error('Personagem do convite não encontrado.');
+        if (!inviter || !receiver) throw Error('Personagem do convite nÃ£o encontrado.');
 
         const partyId = inviter.partyId || ('party_' + crypto.randomUUID().slice(0, 8));
         inviter.partyId = partyId;
         receiver.partyId = partyId;
 
-        log(`🤝 ${receiver.name} aceitou o convite e juntou-se ao grupo de ${inviter.name}!`, 'player');
+        log(`ðŸ¤ ${receiver.name} aceitou o convite e juntou-se ao grupo de ${inviter.name}!`, 'player');
         break;
       }
       case 'partyDecline': {
@@ -1222,20 +1222,20 @@ export async function POST(req: NextRequest) {
         if (inviteIdx !== -1) {
           const invite = s.partyInvites[inviteIdx];
           s.partyInvites.splice(inviteIdx, 1);
-          log(`❌ ${invite.toCharName} recusou o convite de grupo de ${invite.fromCharName}.`, 'player');
+          log(`âŒ ${invite.toCharName} recusou o convite de grupo de ${invite.fromCharName}.`, 'player');
         }
         break;
       }
       case 'partyLeave': {
         const p = own();
-        if (!p.partyId) throw Error('Você não está em nenhum grupo.');
+        if (!p.partyId) throw Error('VocÃª nÃ£o estÃ¡ em nenhum grupo.');
         const oldPartyId = p.partyId;
         p.partyId = undefined;
         const remaining = s.characters.filter((ch) => ch.partyId === oldPartyId);
         if (remaining.length === 1) {
           remaining[0].partyId = undefined;
         }
-        log(`🚪 ${p.name} saiu do grupo e agora segue como aventureiro solo.`, 'player');
+        log(`ðŸšª ${p.name} saiu do grupo e agora segue como aventureiro solo.`, 'player');
         break;
       }
       case 'leave': {
@@ -1248,7 +1248,7 @@ export async function POST(req: NextRequest) {
           s.characters = s.characters.filter((ch) => ch.owner !== leaveUid);
         }
         if (s.characters.length !== initialCount) {
-          log(`👋 Um aventureiro partiu da área e descansou na taverna.`, 'system');
+          log(`ðŸ‘‹ Um aventureiro partiu da Ã¡rea e descansou na taverna.`, 'system');
         }
         break;
       }
@@ -1259,7 +1259,7 @@ export async function POST(req: NextRequest) {
         break;
       }
       default:
-        throw Error('Ação desconhecida.');
+        throw Error('AÃ§Ã£o desconhecida.');
     }
 
     s.logs = s.logs.slice(-200);
@@ -1268,7 +1268,7 @@ export async function POST(req: NextRequest) {
       .bind(JSON.stringify(s), r.id, r.version)
       .run();
 
-    if (!result.meta.changes) {
+    if (!(result?.meta?.changes ?? result?.changes ?? 0)) {
       if (a.action === 'character') {
         const fresh = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(r.id).first<Room>();
         if (fresh) {
@@ -1293,7 +1293,7 @@ export async function POST(req: NextRequest) {
       } else {
         const latest = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(r.id).first<Room>();
         return withUserSession(NextResponse.json({
-          error: 'Outra ação chegou primeiro. Atualize e tente novamente.',
+          error: 'Outra aÃ§Ã£o chegou primeiro. Atualize e tente novamente.',
           room: latest ? { ...latest, state: JSON.parse(latest.state) } : undefined
         }, { status: 409 }), user);
       }
@@ -1344,7 +1344,7 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     console.error('[API Error]:', e);
     return withUserSession(NextResponse.json(
-      { error: e instanceof Error ? e.message : 'Não foi possível salvar. Seu conteúdo foi preservado.' },
+      { error: e instanceof Error ? e.message : 'NÃ£o foi possÃ­vel salvar. Seu conteÃºdo foi preservado.' },
       { status: 400 }
     ), user);
   }
@@ -1356,7 +1356,7 @@ function advance(s: State) {
     s.order = [];
     s.actionUsed = false;
     s.movementUsed = 0;
-    s.logs.push(entry('Vitória! Todos os inimigos foram derrotados na masmorra.', 'gm'));
+    s.logs.push(entry('VitÃ³ria! Todos os inimigos foram derrotados na masmorra.', 'gm'));
     return;
   }
   if (s.characters.every((x) => x.hp <= 0)) {
@@ -1372,16 +1372,16 @@ function advance(s: State) {
     if (s.turn === 0) s.round++;
     safety++;
     if (safety > s.order.length + 2) {
-      // All entities are dead or missing — end combat
+      // All entities are dead or missing â€” end combat
       s.combat = false;
       s.order = [];
       s.actionUsed = false;
       s.movementUsed = 0;
-      s.logs.push(entry('O combate terminou — nenhuma criatura ativa restante.', 'gm'));
+      s.logs.push(entry('O combate terminou â€” nenhuma criatura ativa restante.', 'gm'));
       return;
     }
     const entity = [...s.characters, ...s.enemies].find((x) => x.id === s.order[s.turn]);
-    if (!entity) continue; // Entity no longer exists — skip
+    if (!entity) continue; // Entity no longer exists â€” skip
     if (entity.hp > 0) break; // Found alive entity
   } while (true);
 
@@ -1436,3 +1436,4 @@ function executeEnemyAI(s: State) {
     s.movementUsed = 0;
   }
 }
+
