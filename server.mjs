@@ -1,4 +1,4 @@
-import express from 'express';
+﻿import express from 'express';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import path from 'path';
@@ -147,7 +147,7 @@ function createFetchRequest(req) {
 
 app.use(express.json());
 
-app.all('*', async (req, res) => {
+app.all('/*splat', async (req, res) => {
   try {
     let handler;
     const handlerPath = path.join(__dirname, 'dist', 'server', 'fetch-handler.js');
@@ -186,3 +186,4 @@ const PORT = process.env.PORT || 10000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[Node Server] Running natively on port ${PORT}`);
 });
+
