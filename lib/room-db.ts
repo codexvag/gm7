@@ -1,16 +1,15 @@
-type CloudflareEnv = { DB?: D1Database };
+import { getRawDb } from '../db/index';
 
-let resolvedEnv: CloudflareEnv | undefined;
 let initPromise: Promise<void> | null = null;
 
-async function ensureTables(db: D1Database): Promise<void> {
+async function ensureTables(db: any): Promise<void> {
   if (!initPromise) {
     initPromise = (async () => {
       try {
-        await db.prepare('CREATE TABLE IF NOT EXISTS members (room TEXT NOT NULL, user TEXT NOT NULL, PRIMARY KEY(room, user))').run();
-        await db.prepare('CREATE TABLE IF NOT EXISTS rooms (id TEXT PRIMARY KEY NOT NULL, owner TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL, version INTEGER DEFAULT 0 NOT NULL, code TEXT NOT NULL)').run();
-        await db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS rooms_code_unique ON rooms (code)').run();
-        console.log('[room-db] Tables and indexes verified successfully.');
+        db.prepare('CREATE TABLE IF NOT EXISTS members (room TEXT NOT NULL, user TEXT NOT NULL, PRIMARY KEY(room, user))').run();
+        db.prepare('CREATE TABLE IF NOT EXISTS rooms (id TEXT PRIMARY KEY NOT NULL, owner TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL, version INTEGER DEFAULT 0 NOT NULL, code TEXT NOT NULL)').run();
+        db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS rooms_code_unique ON rooms (code)').run();
+        console.log('[room-db] Tables and indexes verified successfully (better-sqlite3).');
       } catch (err) {
         console.error('[room-db] Table verification error:', err);
       }
@@ -19,22 +18,36 @@ async function ensureTables(db: D1Database): Promise<void> {
   await initPromise;
 }
 
-async function cfEnv(): Promise<CloudflareEnv> {
-  if (!resolvedEnv) {
-    try {
-      const mod = (await import('cloudflare:workers')) as { env?: CloudflareEnv };
-      resolvedEnv = mod.env ?? {};
-    } catch {
-      resolvedEnv = {};
+export async function database(): Promise<any> {
+  const db = getRawDb();
+  await ensureTables(db);
+  
+  // Wrap better-sqlite3 API slightly to match the D1 API surface used in route.ts
+  return {
+    prepare: (query: string) => {
+      const stmt = db.prepare(query);
+      let boundParams: any[] = [];
+      return {
+        bind: (...params: any[]) => {
+          boundParams = params;
+          return {
+            first: async <T = any>() => stmt.get(...boundParams) as T | undefined,
+            all: async <T = any>() => ({ results: stmt.all(...boundParams) as T[], success: true }),
+            run: async () => stmt.run(...boundParams)
+          };
+        },
+        first: async <T = any>() => stmt.get() as T | undefined,
+        all: async <T = any>() => ({ results: stmt.all() as T[], success: true }),
+        run: async () => stmt.run()
+      };
+    },
+    batch: async (statements: any[]) => {
+      const runMany = db.transaction((stmts: any[]) => {
+        for (const s of stmts) {
+          s.run();
+        }
+      });
+      runMany(statements);
     }
-  }
-  return resolvedEnv;
+  };
 }
-
-export async function database(): Promise<D1Database> {
-  const env = await cfEnv();
-  if (!env.DB) throw Error('O armazenamento está temporariamente indisponível. Tente novamente.');
-  await ensureTables(env.DB);
-  return env.DB;
-}
-

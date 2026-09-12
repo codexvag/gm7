@@ -21,12 +21,7 @@ async function resolveGroqKey(rawKey?: string): Promise<string> {
     if (val && typeof val === 'string' && val.trim()) return val.trim();
   }
 
-  // 2. Cloudflare Workers module environment
-  try {
-    const mod = (await import('cloudflare:workers')) as unknown as { env?: Record<string, string> };
-    const cfVal = mod.env?.GROQ_API_KEY || mod.env?.groq_api_key;
-    if (cfVal && typeof cfVal === 'string' && cfVal.trim()) return cfVal.trim();
-  } catch {}
+  // 2. Cloudflare Workers module environment removed for Node.js deployment
 
   // 3. globalThis runtime environment
   if (typeof globalThis !== 'undefined') {

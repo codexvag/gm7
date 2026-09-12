@@ -34,6 +34,7 @@ import {
 import { isGridTileWalkable, MAP_COLLISION_PROFILES, type CollisionPolygon } from '@/lib/collision-system';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { emitRoomUpdate } from '@/lib/room-events';
 import { touchChar } from '@/lib/state-merge';
 
