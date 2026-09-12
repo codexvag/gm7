@@ -2,7 +2,7 @@
 'use client';
 
 
-function DndTokens({ displayHeroes, enemies, npcs, gridSize, selectedHeroId, selectedEnemyId, activeTurnId, targetingAction, isCombat, activeVfx, contextEnemy, setContextEnemy, onSelectToken, onTargetEnemy, onTalkNpc, onInteractPlayer, currentHeroX, currentHeroY }) {
+function DndTokens({ displayHeroes, enemies, npcs, corpses, onLootCorpse, currentBiome, gridSize, selectedHeroId, selectedEnemyId, activeTurnId, targetingAction, isCombat, activeVfx, contextEnemy, setContextEnemy, onSelectToken, onTargetEnemy, onTalkNpc, onInteractPlayer, currentHeroX, currentHeroY }: any) {
   const getStatusClass = (condition) => {
     const c = condition.toLowerCase();
     if (c.includes('envenenad') || c.includes('poison')) return 'status-poisoned';
@@ -24,10 +24,10 @@ function DndTokens({ displayHeroes, enemies, npcs, gridSize, selectedHeroId, sel
     return 'bg-zinc-500';
   };
 
-  const isInRange = (x, y) => {
-    if (!targetingAction) return false;
+  const isInRange = (x: number, y: number) => {
     const dist = Math.max(Math.abs(currentHeroX - x), Math.abs(currentHeroY - y));
-    return dist <= targetingAction.rangeSquares;
+    if (targetingAction) return dist <= targetingAction.rangeSquares;
+    return dist <= 1;
   };
 
   return (
@@ -118,8 +118,13 @@ function DndTokens({ displayHeroes, enemies, npcs, gridSize, selectedHeroId, sel
                className="absolute flex items-center justify-center pointer-events-auto"
                onClick={(e) => {
                  e.stopPropagation();
-                 if (isTargeted) onTargetEnemy(enemy.id);
-                 else { onSelectToken('enemy', enemy.id); setContextEnemy(enemy); }
+                 onSelectToken('enemy', enemy.id);
+                 setContextEnemy(enemy);
+                 if (isTargeted) {
+                   onTargetEnemy(enemy.id);
+                 } else if (isInRange(enemy.x, enemy.y)) {
+                   onTargetEnemy(enemy.id);
+                 }
                }}>
             <div className={`relative w-[85%] h-[85%] max-w-[42px] max-h-[42px] rounded-full flex flex-col items-center justify-center cursor-pointer shadow-[0_4px_10px_rgba(0,0,0,0.6)] token-human-sway ${isActiveTurn ? 'ring-4 ring-red-500 ring-offset-2 ring-offset-black scale-115 shadow-[0_0_25px_rgba(239,68,68,0.9)] token-target-pulse' : isSelected ? 'ring-2 ring-red-500 ring-offset-1 ring-offset-black scale-110 token-target-pulse' : isTargeted ? 'ring-2 ring-amber-400/80 ring-offset-1 ring-offset-black scale-105 animate-pulse' : 'ring-[1.5px] ring-red-700/80 hover:scale-105'} bg-gradient-to-br from-red-900 via-red-950 to-zinc-950 transition-transform ${statusClasses}`}>
               <div className="absolute inset-[1px] rounded-full border border-red-500/30 pointer-events-none" />
@@ -144,32 +149,95 @@ function DndTokens({ displayHeroes, enemies, npcs, gridSize, selectedHeroId, sel
         );
       })}
 
-      {(npcs || []).map(npc => {
-        const dist = Math.max(Math.abs(currentHeroX - (npc.x || 0)), Math.abs(currentHeroY - (npc.y || 0)));
-        const isNear = dist <= 1;
-        const leftPerc = ((npc.x || 0) / gridSize) * 100;
-        const topPerc = ((npc.y || 0) / gridSize) * 100;
-        const sizePerc = 100 / gridSize;
+      {(npcs || [])
+        .filter((npc: any) => {
+          if (npc.biome) return npc.biome === currentBiome;
+          return currentBiome === 'village';
+        })
+        .map((npc: any) => {
+          const dist = Math.max(Math.abs(currentHeroX - (npc.x || 0)), Math.abs(currentHeroY - (npc.y || 0)));
+          const isNear = dist <= 1;
+          const leftPerc = ((npc.x || 0) / gridSize) * 100;
+          const topPerc = ((npc.y || 0) / gridSize) * 100;
+          const sizePerc = 100 / gridSize;
 
-        return (
-          <div key={npc.id}
-               style={{ left: leftPerc + '%', top: topPerc + '%', width: sizePerc + '%', height: sizePerc + '%', transition: 'left 340ms linear, top 340ms linear', zIndex: 20 }}
-               className="absolute flex items-center justify-center pointer-events-auto"
-               onClick={(e) => {
-                 e.stopPropagation();
-                 if (isNear) onTalkNpc?.(npc.id);
-               }}>
-            <div className={`relative w-[80%] h-[80%] max-w-[36px] max-h-[36px] rounded-full flex flex-col items-center justify-center cursor-pointer transition-all ${isNear ? 'ring-2 ring-amber-400 ring-offset-1 ring-offset-black npc-talk-glow shadow-[0_0_18px_rgba(245,158,11,0.7)] scale-105' : 'ring-[1.5px] ring-emerald-500/70 opacity-90 shadow-md hover:scale-105'} bg-gradient-to-br from-[#1b3320] via-[#102415] to-[#0a140c]`}>
-              <div className="absolute inset-[1px] rounded-full border border-emerald-500/20 pointer-events-none" />
-              {isNear && (
-                <button type="button" onClick={(e) => { e.stopPropagation(); onTalkNpc?.(npc.id); }} className="absolute -top-7 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-400 to-yellow-300 hover:from-amber-300 hover:to-yellow-200 text-black font-black text-[9px] shadow-[0_0_12px_rgba(245,158,11,0.9)] cursor-pointer active:scale-95 transition-all whitespace-nowrap">💬 Falar</button>
-              )}
-              <span className="text-sm drop-shadow-md select-none">{npc.id === 'doran' ? '🧙' : npc.id === 'elenor' ? '🧪' : npc.id === 'kaelen' ? '🛡️' : '👤'}</span>
-              <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-zinc-950/95 border border-emerald-500/60 text-emerald-300 font-serif font-bold text-[8px] px-1.5 py-0 rounded-full tracking-tight whitespace-nowrap z-20 shadow pointer-events-none">{npc.name.split(' ')[0]}</div>
+          return (
+            <div key={npc.id}
+                 style={{ left: leftPerc + '%', top: topPerc + '%', width: sizePerc + '%', height: sizePerc + '%', transition: 'left 340ms linear, top 340ms linear', zIndex: 20 }}
+                 className="absolute flex items-center justify-center pointer-events-auto"
+                 onClick={(e) => {
+                   e.stopPropagation();
+                   if (isNear) onTalkNpc?.(npc.id);
+                 }}>
+              <div className={`relative w-[80%] h-[80%] max-w-[36px] max-h-[36px] rounded-full flex flex-col items-center justify-center cursor-pointer transition-all ${isNear ? 'ring-2 ring-amber-400 ring-offset-1 ring-offset-black npc-talk-glow shadow-[0_0_18px_rgba(245,158,11,0.7)] scale-105' : 'ring-[1.5px] ring-emerald-500/70 opacity-90 shadow-md hover:scale-105'} bg-gradient-to-br from-[#1b3320] via-[#102415] to-[#0a140c]`}>
+                <div className="absolute inset-[1px] rounded-full border border-emerald-500/20 pointer-events-none" />
+                {isNear && (
+                  <button type="button" onClick={(e) => { e.stopPropagation(); onTalkNpc?.(npc.id); }} className="absolute -top-7 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-400 to-yellow-300 hover:from-amber-300 hover:to-yellow-200 text-black font-black text-[9px] shadow-[0_0_12px_rgba(245,158,11,0.9)] cursor-pointer active:scale-95 transition-all whitespace-nowrap">💬 Falar</button>
+                )}
+                <span className="text-sm drop-shadow-md select-none">{npc.id === 'doran' ? '🧙' : npc.id === 'elenor' ? '🧪' : npc.id === 'kaelen' ? '🛡️' : '👤'}</span>
+                <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-zinc-950/95 border border-emerald-500/60 text-emerald-300 font-serif font-bold text-[8px] px-1.5 py-0 rounded-full tracking-tight whitespace-nowrap z-20 shadow pointer-events-none">{npc.name.split(' ')[0]}</div>
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+
+      {/* RENDER GROUND CORPSES WITH PROCEDURAL LOOT */}
+      {(corpses || [])
+        .filter((c: any) => !c.biome || c.biome === currentBiome)
+        .map((corpse: any) => {
+          const dist = Math.max(Math.abs(currentHeroX - corpse.x), Math.abs(currentHeroY - corpse.y));
+          const isNear = dist <= 1;
+          const leftPerc = (corpse.x / gridSize) * 100;
+          const topPerc = (corpse.y / gridSize) * 100;
+          const sizePerc = 100 / gridSize;
+
+          return (
+            <div
+              key={corpse.id}
+              style={{
+                left: leftPerc + '%',
+                top: topPerc + '%',
+                width: sizePerc + '%',
+                height: sizePerc + '%',
+                transition: 'left 340ms linear, top 340ms linear',
+                zIndex: 22
+              }}
+              className="absolute flex items-center justify-center pointer-events-auto"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isNear && onLootCorpse) {
+                  onLootCorpse(corpse.id);
+                }
+              }}
+            >
+              <div
+                className={`relative w-[85%] h-[85%] max-w-[38px] max-h-[38px] rounded-full flex flex-col items-center justify-center cursor-pointer transition-all ${
+                  isNear
+                    ? 'ring-2 ring-yellow-400 ring-offset-1 ring-offset-black shadow-[0_0_15px_rgba(234,179,8,0.8)] scale-110 animate-bounce'
+                    : 'ring-1 ring-amber-600/70 opacity-90 shadow-md hover:scale-105'
+                } bg-gradient-to-br from-amber-950 via-zinc-950 to-black`}
+                title={`${corpse.name} • ${corpse.gold} PO • Clique para saquear`}
+              >
+                <span className="text-xs select-none">💀</span>
+                <div className="absolute -bottom-3.5 left-1/2 -translate-x-1/2 bg-yellow-950 border border-yellow-500/80 text-yellow-300 font-mono text-[7px] px-1 rounded-full whitespace-nowrap shadow z-20">
+                  {corpse.gold} PO
+                </div>
+                {isNear && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onLootCorpse?.(corpse.id);
+                    }}
+                    className="absolute -top-7 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-300 hover:to-amber-400 text-black font-black text-[9px] shadow-[0_0_12px_rgba(245,158,11,0.9)] cursor-pointer active:scale-95 transition-all whitespace-nowrap"
+                  >
+                    💰 Saquear
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
     </>
   );
 }
@@ -199,7 +267,8 @@ import {
   RotateCcw,
   Mic
 } from 'lucide-react';
-import type { Character, Enemy } from '@/lib/game-engine';
+import type { Character, Enemy, GroundCorpse } from '@/lib/game-engine';
+import { playSfx } from '@/lib/sound-effects';
 import type { ActionSelection } from './bottom-player-hud';
 import type { ProceduralDungeon, TileType } from '@/lib/dungeon-generator';
 import type { Battlemap, OrganicTileType, BiomeType } from '@/lib/battlemap-biomes';
@@ -211,6 +280,32 @@ import {
   type Point,
   type CollisionPolygon
 } from '@/lib/collision-system';
+
+// Physical Adventure Portals connected organically between biomes
+export const BIOME_PORTALS: Record<string, { label: string; x: number; y: number; targetBiome: BiomeType; targetLocationIndex: number; icon: string }[]> = {
+  village: [
+    { label: 'Portão Norte: Floresta dos Sussurros', x: 4, y: 0, targetBiome: 'forest', targetLocationIndex: 1, icon: '🌲' }
+  ],
+  forest: [
+    { label: 'Trilha Sul: Retornar à Vila', x: 2, y: 7, targetBiome: 'village', targetLocationIndex: 0, icon: '🏡' },
+    { label: 'Portal Antigo: Ruínas da Abadia', x: 7, y: 0, targetBiome: 'ruins', targetLocationIndex: 2, icon: '🏛️' }
+  ],
+  ruins: [
+    { label: 'Caminho Sul: Floresta dos Sussurros', x: 4, y: 7, targetBiome: 'forest', targetLocationIndex: 1, icon: '🌲' },
+    { label: 'Descida: Catacumbas dos Três Selos', x: 7, y: 7, targetBiome: 'dungeon', targetLocationIndex: 3, icon: '🗝️' }
+  ],
+  dungeon: [
+    { label: 'Escadas: Pátio das Ruínas', x: 0, y: 4, targetBiome: 'ruins', targetLocationIndex: 2, icon: '🏛️' },
+    { label: 'Fenda Vulcânica: Desfiladeiro Escarpado', x: 7, y: 0, targetBiome: 'canyon', targetLocationIndex: 4, icon: '🌋' }
+  ],
+  canyon: [
+    { label: 'Trilha Baixa: Catacumbas', x: 0, y: 7, targetBiome: 'dungeon', targetLocationIndex: 3, icon: '🗝️' },
+    { label: 'Portal de Obsidiana: Covil de Ignisrax', x: 7, y: 0, targetBiome: 'lair', targetLocationIndex: 5, icon: '🐉' }
+  ],
+  lair: [
+    { label: 'Fenda de Retorno: Desfiladeiro', x: 4, y: 7, targetBiome: 'canyon', targetLocationIndex: 4, icon: '🌋' }
+  ]
+};
 
 // Map action/weapon/spell names to VFX CSS class
 function getVfxClass(actionName: string): string {
@@ -272,6 +367,7 @@ export interface MapNpc {
   x?: number;
   y?: number;
   icon?: string;
+  biome?: BiomeType;
 }
 
 interface TacticalMapProps {
@@ -296,11 +392,15 @@ interface TacticalMapProps {
   busy?: boolean;
   activeTurnId?: string;
   npcs?: MapNpc[];
+  corpses?: GroundCorpse[];
+  onLootCorpse?: (corpseId: string) => void;
+  onNavigatePortal?: (targetBiome: BiomeType, targetLocationIndex: number) => void;
   onTalkNpc?: (npcId: string) => void;
   projectiles?: ProjectileVfx[];
   movementUsed?: number;
   biome?: BiomeType;
   onInteractPlayer?: (hero: Character) => void;
+  screenShake?: boolean;
 }
 
 export function TacticalMap({
@@ -325,11 +425,15 @@ export function TacticalMap({
   busy,
   activeTurnId,
   npcs,
+  corpses,
+  onLootCorpse,
+  onNavigatePortal,
   onTalkNpc,
   projectiles,
   movementUsed = 0,
   biome = 'village',
-  onInteractPlayer
+  onInteractPlayer,
+  screenShake
 }: TacticalMapProps) {
   const [fogOfWar, setFogOfWar] = useState(true);
   const [zoomScale, setZoomScale] = useState(1);
@@ -476,6 +580,10 @@ export function TacticalMap({
     return MAP_COLLISION_PROFILES[currentBiome]?.customZones || [];
   }, [customZonesLoaded, customMapZones, currentBiome]);
 
+  const activePortals = useMemo(() => {
+    return BIOME_PORTALS[currentBiome] || [];
+  }, [currentBiome]);
+
   // Impactful Exploration -> Combat transition banner
   const [combatTransition, setCombatTransition] = useState(false);
   const wasCombatRef = useRef(isCombat);
@@ -576,6 +684,7 @@ export function TacticalMap({
     walkTimersRef.current[heroId] = setInterval(() => {
       step++;
       if (step < path.length) {
+        try { playSfx('step', 0.25); } catch {}
         setWalkingHeroes((prev) => ({
           ...prev,
           [heroId]: { x: path[step].x, y: path[step].y, isWalking: true }
@@ -951,7 +1060,11 @@ export function TacticalMap({
               const isHovered = hoveredSquare?.x === x && hoveredSquare?.y === y;
 
               const isVillage = battlemap?.biome === 'village' || locationName.toLowerCase().includes('vila');
-              const tileNpcs = isVillage ? (npcs || []).filter((n) => n.x === x && n.y === y) : [];
+              const tileNpcs = (npcs || []).filter((n) => {
+                if (n.x !== x || n.y !== y) return false;
+                if (n.biome) return n.biome === currentBiome;
+                return currentBiome === 'village';
+              });
               const tileHeroes = displayHeroes.filter((c) => c.x === x && c.y === y);
               const tileEnemies = enemies.filter((e) => e.x === x && e.y === y && e.hp > 0);
               const hasEntities = tileHeroes.length > 0 || tileEnemies.length > 0 || tileNpcs.length > 0;
@@ -961,7 +1074,6 @@ export function TacticalMap({
 
               const tile = getTileInfo(x, y);
               const tType = tile.type;
-              const isCenterCampfire = x === Math.floor(gridSize / 2) && y === Math.floor(gridSize / 2);
 
               const isWalkable = isGridTileWalkable(currentBiome, x, y, gridSize, activeZones);
               const isOnActivePath = activePath.some((p) => p.x === x && p.y === y);
@@ -1008,8 +1120,19 @@ export function TacticalMap({
                         }
                       }
                     } else if (tileEnemies.length > 0) {
-                      setContextEnemy(tileEnemies[0]);
-                      onSelectToken('enemy', tileEnemies[0].id);
+                      const enemy = tileEnemies[0];
+                      setContextEnemy(enemy);
+                      onSelectToken('enemy', enemy.id);
+                      const dist = activeHero ? Math.max(Math.abs(currentHeroX - x), Math.abs(currentHeroY - y)) : 99;
+                      if (dist <= 1) {
+                        onTargetEnemy(enemy.id);
+                      }
+                    } else if (activePortals.some((p) => p.x === x && p.y === y)) {
+                      const pObj = activePortals.find((p) => p.x === x && p.y === y)!;
+                      if (onNavigatePortal) {
+                        try { playSfx('door'); } catch {}
+                        onNavigatePortal(pObj.targetBiome, pObj.targetLocationIndex);
+                      }
                     } else if (['chest', 'shrine', 'stairs', 'well'].includes(tType)) {
                       onInteractObject?.(tType, x, y);
                     } else if (canMove && activeHero && !hasEntities) {
@@ -1046,89 +1169,34 @@ export function TacticalMap({
                       : tileBg
                   }`}
                 >
-                  {/* Organic Visual Embellishments */}
-                {illuminated && (
-                  <>
-                    {/* Water flow line */}
-                    {tType === 'water' && (
-                      <div className="absolute inset-0 flex items-center justify-center opacity-40">
-                        <Droplets size={10} className="text-sky-300 animate-pulse" />
-                      </div>
-                    )}
+                {/* Physical Adventure Portals rendered cleanly on the map */}
+                {illuminated && activePortals.filter((p) => p.x === x && p.y === y).map((portal, pIdx) => (
+                  <div
+                    key={pIdx}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onNavigatePortal) {
+                        try { playSfx('door'); } catch {}
+                        onNavigatePortal(portal.targetBiome, portal.targetLocationIndex);
+                      }
+                    }}
+                    className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer pointer-events-auto group z-20"
+                    title={`Passar pelo portal: ${portal.label}`}
+                  >
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-500/40 via-yellow-500/30 to-amber-700/50 border-2 border-amber-300 flex items-center justify-center text-base shadow-[0_0_20px_rgba(245,158,11,0.8)] animate-pulse group-hover:scale-125 transition-transform">
+                      <span>{portal.icon}</span>
+                    </div>
+                    <div className="absolute -bottom-5 bg-zinc-950/95 border border-amber-400 text-amber-200 font-serif text-[8px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap shadow-lg group-hover:opacity-100 opacity-90 transition-opacity">
+                      {portal.label.split(':')[0]}
+                    </div>
+                  </div>
+                ))}
 
-                    {/* Wooden Bridge Planks */}
-                    {tType === 'bridge' && (
-                      <div className="absolute inset-0 flex flex-col justify-between py-0.5 px-0.5 opacity-60 pointer-events-none">
-                        <div className="h-0.5 w-full bg-amber-900" />
-                        <div className="h-0.5 w-full bg-amber-900" />
-                        <div className="h-0.5 w-full bg-amber-900" />
-                      </div>
-                    )}
-
-                    {/* Tree Foliage Canopy */}
-                    {tType === 'tree' && (
-                      <div
-                        className="w-4/5 h-4/5 rounded-full bg-emerald-800 border border-emerald-600 shadow-md flex items-center justify-center"
-                        title="Árvore / Bosque (Concede cobertura)"
-                      >
-                        <div className="w-1.5 h-1.5 rounded-full bg-amber-900/80" />
-                      </div>
-                    )}
-
-                    {/* Stone Well */}
-                    {tType === 'well' && (
-                      <div
-                        className="w-4/5 h-4/5 rounded-full bg-stone-700 border-2 border-stone-500 flex items-center justify-center shadow"
-                        title="Poço da Vila (Água fresca)"
-                      >
-                        <div className="w-2 h-2 rounded-full bg-sky-500" />
-                      </div>
-                    )}
-
-                    {/* Chest */}
-                    {tType === 'chest' && (
-                      <div
-                        className="w-5 h-5 rounded-md bg-amber-950/90 border border-amber-400 flex items-center justify-center text-amber-300 animate-bounce"
-                        title="Baú de Suprimentos (Examinar)"
-                      >
-                        <Package size={11} />
-                      </div>
-                    )}
-
-                    {/* Shrine / Menir */}
-                    {tType === 'shrine' && (
-                      <div
-                        className="w-5 h-5 rounded-full bg-emerald-950/90 border border-emerald-400 flex items-center justify-center text-emerald-300 animate-pulse"
-                        title="Altar Sagrado / Menir dos Druidas"
-                      >
-                        <Sparkles size={11} />
-                      </div>
-                    )}
-
-                    {/* Stairs */}
-                    {tType === 'stairs' && (
-                      <div
-                        className="w-5 h-5 rounded-md bg-purple-950/90 border border-purple-400 flex items-center justify-center text-purple-300 animate-pulse"
-                        title="Escadas para o Próximo Nível"
-                      >
-                        <ArrowDownCircle size={12} />
-                      </div>
-                    )}
-                    {/* Campfire (Center feature as seen in reference image) */}
-                    {isCenterCampfire && (
-                      <div className="relative flex items-center justify-center pointer-events-none" title="Fogueira Central">
-                        <div className="absolute w-8 h-8 rounded-full campfire-ambient opacity-75 pointer-events-none" />
-                        <Flame size={18} className="text-amber-400 animate-bounce relative z-10 drop-shadow-[0_0_10px_rgba(245,158,11,1)]" />
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {/* Movement distance preview tooltip */}
+                {/* Movement distance preview tooltip with D&D 5e distance standards */}
                 {isHovered && activePath.length > 1 && !hasEntities && illuminated && (
-                  <div className="absolute -top-6 z-30 pointer-events-none bg-black/95 border border-zinc-700 px-1.5 py-0.5 rounded text-[9px] font-mono text-zinc-200 whitespace-nowrap shadow-md">
-                    <span className={isPathAffordable ? 'text-emerald-400' : 'text-red-400'}>
-                      {pathMeters}m ({pathStepCount}q)
+                  <div className="absolute -top-7 z-30 pointer-events-none bg-black/95 border border-zinc-700 px-2 py-0.5 rounded text-[9px] font-mono text-zinc-200 whitespace-nowrap shadow-md flex items-center gap-1">
+                    <span className={isPathAffordable ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
+                      {pathMeters}m ({pathStepCount}q • 1.5m/q)
                     </span>
                   </div>
                 )}
@@ -1144,6 +1212,9 @@ export function TacticalMap({
               displayHeroes={displayHeroes} 
               enemies={enemies} 
               npcs={npcs} 
+              corpses={corpses}
+              onLootCorpse={onLootCorpse}
+              currentBiome={currentBiome}
               gridSize={gridSize} 
               selectedHeroId={selectedHeroId} 
               selectedEnemyId={selectedEnemyId}

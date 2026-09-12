@@ -60,8 +60,8 @@ export type EquipmentSlots = {
   accessory?: string;
 };
 
-export type ItemRarity = 'comum' | 'incomum' | 'raro' | 'epico' | 'lendario';
-export type ItemType = 'arma' | 'armadura' | 'escudo' | 'elmo' | 'botas' | 'acessorio' | 'consumivel' | 'outro';
+export type ItemRarity = 'comum' | 'incomum' | 'raro' | 'muito_raro' | 'epico' | 'lendario';
+export type ItemType = 'arma' | 'armadura' | 'escudo' | 'elmo' | 'botas' | 'acessorio' | 'consumivel' | 'pocao' | 'pergaminho' | 'anel' | 'geral' | 'outro';
 
 export type ItemDefinition = {
   id: string;
@@ -486,6 +486,43 @@ export type Log = {
   sources?: { title: string; url: string }[];
 };
 
+export type NpcEntity = {
+  id: string;
+  name: string;
+  role: string;
+  description: string;
+  dialogue?: string[];
+  x?: number;
+  y?: number;
+  icon?: string;
+  biome?: BiomeType;
+};
+
+export interface GroundCorpse {
+  id: string;
+  name: string;
+  enemyName: string;
+  x: number;
+  y: number;
+  gold: number;
+  items: string[];
+  biome?: BiomeType;
+  slainBy?: string;
+  createdAt: number;
+}
+
+export interface EconomyContext {
+  inflationMultiplier?: number;
+  priceMultiplier?: number;
+  scarcityNotes?: string;
+  potionScarcity?: boolean;
+  caravanDelayed?: boolean;
+  narrativeNotice?: string;
+  faunaCap?: number;
+  shopStock?: any[];
+  updatedAt: number;
+}
+
 export type State = {
   characters: Character[];
   enemies: Enemy[];
@@ -496,7 +533,9 @@ export type State = {
   combat: boolean;
   location: number;
   notes: string;
-  npcs: { id: string; name: string; role: string; description: string; dialogue?: string[]; x?: number; y?: number; icon?: string }[];
+  npcs: NpcEntity[];
+  corpses?: GroundCorpse[];
+  economyContext?: EconomyContext;
   questProgress?: Record<string, boolean>;
   worldFlags?: Record<string, boolean>;
   activeMicroAdventureId?: string;
@@ -504,6 +543,8 @@ export type State = {
   bonusActionUsed?: boolean;
   movementUsed?: number;
   biome?: BiomeType;
+  combatMode?: 'tactical' | 'free';
+  combatPartyId?: string;
   partyInvites?: PartyInvite[];
   act?: 1 | 2 | 3;
   updatedAt?: number;
@@ -566,6 +607,12 @@ export function initialState(): State {
     questProgress: {},
     worldFlags: {},
     act: 1,
+    corpses: [],
+    economyContext: {
+      inflationMultiplier: 1.0,
+      scarcityNotes: 'Mercado e suprimentos estáveis na vila.',
+      updatedAt: Date.now()
+    },
     npcs: [
       {
         id: 'doran',
@@ -575,6 +622,7 @@ export function initialState(): State {
         x: 6,
         y: 4,
         icon: 'Crown',
+        biome: 'village',
         dialogue: [
           'Agradeço por terem vindo! Estranhas criaturas de cinzas foram avistadas rondando a ponte leste da nossa vila.',
           'Dizem que os selos da antiga floresta foram rompidos. Se vocês puderem purificar o santuário, a vila recompensará vocês com ouro e honra.',
@@ -589,6 +637,7 @@ export function initialState(): State {
         x: 2,
         y: 3,
         icon: 'FlaskConical',
+        biome: 'village',
         dialogue: [
           'Saudações, aventureiros! A floresta lá fora é implacável com os desatentos.',
           'Guardem estas Poções de Cura na mochila. Quando precisarem, basta beber ou aplicar no aliado tocando na poção: restaura 2d4 + 2 PV instantaneamente!',
@@ -603,6 +652,7 @@ export function initialState(): State {
         x: 9,
         y: 6,
         icon: 'Shield',
+        biome: 'village',
         dialogue: [
           'Atenção, combatentes! Em batalha sob as regras táticas 5e, cada um tem direito a 1 Ação e seu deslocamento por turno.',
           'Nunca gastem seu ataque sem verificar a cobertura do terreno. Árvores e muros concedem vantagem tática.',
@@ -694,6 +744,12 @@ export function starterState(ownerId = 'local-hero'): State {
     biome: 'village',
     questProgress: {},
     act: 1,
+    corpses: [],
+    economyContext: {
+      inflationMultiplier: 1.0,
+      scarcityNotes: 'Mercado e suprimentos estáveis na vila.',
+      updatedAt: Date.now()
+    },
     npcs: [
       {
         id: 'doran',
@@ -703,6 +759,7 @@ export function starterState(ownerId = 'local-hero'): State {
         x: 6,
         y: 4,
         icon: 'Crown',
+        biome: 'village',
         dialogue: [
           'Agradeço por terem vindo! Estranhas criaturas de cinzas foram avistadas rondando a ponte leste da nossa vila.',
           'Dizem que os selos da antiga floresta foram rompidos. Se vocês puderem purificar o santuário, a vila recompensará vocês com ouro e honra.',
@@ -717,6 +774,7 @@ export function starterState(ownerId = 'local-hero'): State {
         x: 2,
         y: 3,
         icon: 'FlaskConical',
+        biome: 'village',
         dialogue: [
           'Saudações, aventureiros! A floresta lá fora é implacável com os desatentos.',
           'Guardem estas Poções de Cura na mochila. Quando precisarem, basta beber ou aplicar no aliado tocando na poção: restaura 2d4 + 2 PV instantaneamente!',
@@ -731,6 +789,7 @@ export function starterState(ownerId = 'local-hero'): State {
         x: 9,
         y: 6,
         icon: 'Shield',
+        biome: 'village',
         dialogue: [
           'Atenção, combatentes! Em batalha sob as regras táticas 5e, cada um tem direito a 1 Ação e seu deslocamento por turno.',
           'Nunca gastem seu ataque sem verificar a cobertura do terreno. Árvores e muros concedem vantagem tática.',
@@ -1270,8 +1329,8 @@ export function validateMovement(
     return { valid: false, reason: 'Personagem incapacitado ou atordoado não pode se mover.', distance };
   }
 
-  // Combat Turn & Movement Budget validation
-  if (state.combat) {
+  // Combat Turn & Movement Budget validation (only applies to combatants in the initiative order)
+  if (state.combat && state.order && state.order.includes(character.id)) {
     const activeTurnId = state.order[state.turn];
     if (activeTurnId !== character.id) {
       return { valid: false, reason: 'Aguarde o seu turno para se mover no combate.', distance };

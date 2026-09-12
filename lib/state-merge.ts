@@ -1,4 +1,4 @@
-import type { Character, Enemy, Log, State } from './game-engine';
+import type { Character, Enemy, Log, State, GroundCorpse } from './game-engine';
 
 // Cross-instance (multi-isolate Cloudflare) optimistic merge utilities.
 // Local RAM / client state is merged with D1 / server snapshots per-entity by
@@ -63,6 +63,15 @@ export function mergeEnemies(base: Enemy[], incoming: Enemy[]): Enemy[] {
   return Array.from(map.values());
 }
 
+export function mergeCorpses(base: GroundCorpse[] = [], incoming: GroundCorpse[] = []): GroundCorpse[] {
+  const map = new Map<string, GroundCorpse>();
+  for (const c of base) map.set(c.id, c);
+  for (const c of incoming) {
+    if (!map.has(c.id)) map.set(c.id, c);
+  }
+  return Array.from(map.values());
+}
+
 export function mergeLogs(base: Log[], incoming: Log[]): Log[] {
   const map = new Map<string, Log>();
   for (const l of base) map.set(l.id, l);
@@ -100,6 +109,7 @@ export function mergeStates(
     ...winner,
     characters: mergeCharacters(base.characters, incoming.characters, useIncomingScalars),
     enemies: mergeEnemies(base.enemies, incoming.enemies),
+    corpses: mergeCorpses(base.corpses, incoming.corpses),
     logs: mergeLogs(base.logs, incoming.logs).slice(-200)
   };
   return merged;

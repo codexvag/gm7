@@ -9,6 +9,7 @@ import {
   Sparkles,
   Zap,
   Package,
+  ShoppingBag,
   Clock,
   ChevronUp,
   ChevronDown,
@@ -79,6 +80,7 @@ interface BottomPlayerHudProps {
   onSelectHero: (id: string) => void;
   onActionSelect: (action: ActionSelection) => void;
   onOpenInventory: () => void;
+  onOpenShop?: () => void;
   onOpenCharacterSheet: () => void;
   onOpenLevelUp?: () => void;
   onEndTurn?: () => void;
@@ -97,6 +99,7 @@ export function BottomPlayerHud({
   onSelectHero,
   onActionSelect,
   onOpenInventory,
+  onOpenShop,
   onOpenCharacterSheet,
   onOpenLevelUp = () => {},
   onEndTurn,
@@ -345,12 +348,23 @@ export function BottomPlayerHud({
 
             <button
               onClick={onOpenInventory}
-              className="p-1 px-2.5 bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-zinc-700 rounded-xl flex items-center gap-1.5 text-xs font-semibold shadow transition-colors"
+              className="p-1 px-2.5 bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-zinc-700 rounded-xl flex items-center gap-1.5 text-xs font-semibold shadow transition-colors cursor-pointer"
               title="Mochila e Equipamentos"
             >
               <Package size={14} />
               <span className="hidden sm:inline">Mochila</span>
             </button>
+
+            {onOpenShop && (
+              <button
+                onClick={onOpenShop}
+                className="p-1 px-2.5 bg-zinc-900 hover:bg-amber-950/50 text-amber-400 hover:text-amber-300 border border-zinc-700 hover:border-amber-600/70 rounded-xl flex items-center gap-1.5 text-xs font-semibold shadow transition-colors cursor-pointer"
+                title="Comércio e Mercadores de Valdoria"
+              >
+                <ShoppingBag size={14} />
+                <span className="hidden sm:inline">Loja</span>
+              </button>
+            )}
 
             <button
               onClick={() => setMinimized(!isMinimized)}

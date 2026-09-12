@@ -15,6 +15,7 @@ import {
   type Enemy
 } from './game-engine';
 import { MICRO_ADVENTURES, startMicroAdventure } from './micro-adventures';
+import { adjustShopStockWithinBounds, adjustFaunaPresenceWithinBounds } from './sandbox-director';
 
 export interface GmToolDefinition {
   type: 'function';
@@ -159,6 +160,43 @@ export const GM_CONTROLLED_TOOLS: GmToolDefinition[] = [
           adventureId: { type: 'string', description: 'ID opcional da microaventura a iniciar' }
         },
         required: ['eventType', 'detail']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'influence_economy',
+      description:
+        'Sugere uma tendência ou contexto narrativo na economia da vila (ex: escassez de suprimentos, atraso de caravana). Os preços e estoques são ajustados dentro de limites rígidos autorizados (0.85x a 1.25x).',
+      parameters: {
+        type: 'object',
+        properties: {
+          reason: { type: 'string', description: 'Motivo narrativo da mudança econômica (ex: Caravana atrasada por ataques de goblins)' },
+          multiplier: { type: 'number', description: 'Multiplicador sugerido de preços (limitado entre 0.85 e 1.25)' },
+          item: { type: 'string', description: 'Item ou categoria específica afetada (opcional)' }
+        },
+        required: ['reason']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'adjust_ecosystem',
+      description:
+        'Sugere dinâmicas sutis de ecossistema e fauna regional (ex: presença de cervos, rastros de lobos ou corvos vigiando) dentro de um teto estrito de segurança.',
+      parameters: {
+        type: 'object',
+        properties: {
+          reason: { type: 'string', description: 'Motivo narrativo ou observação ambiental' },
+          critterType: {
+            type: 'string',
+            enum: ['lobos_rastros', 'cervos', 'corvos'],
+            description: 'Tipo de manifestação ecológica segura'
+          }
+        },
+        required: ['reason']
       }
     }
   }
@@ -411,6 +449,31 @@ export function executeServerAuthoritativeGmTool(
       }
 
       return { tool: name, success: true, message: logText };
+    }
+
+    case 'influence_economy': {
+      const reason = String(rawArgs.reason || 'Adaptação econômica').slice(0, 150);
+      const mult = typeof rawArgs.multiplier === 'number' ? rawArgs.multiplier : 1.1;
+      const item = rawArgs.item ? String(rawArgs.item).slice(0, 50) : undefined;
+      const res = adjustShopStockWithinBounds(state, reason, mult, item);
+      return {
+        tool: name,
+        success: res.approved,
+        message: `[Economia Narrativa] Multiplicador ${res.finalMultiplier}x. ${res.notice}`
+      };
+    }
+
+    case 'adjust_ecosystem': {
+      const reason = String(rawArgs.reason || 'Dinâmica ambiental').slice(0, 150);
+      const critterType = rawArgs.critterType === 'lobos_rastros' || rawArgs.critterType === 'cervos'
+        ? rawArgs.critterType
+        : 'corvos';
+      const res = adjustFaunaPresenceWithinBounds(state, reason, critterType);
+      return {
+        tool: name,
+        success: res.approved,
+        message: res.message
+      };
     }
 
     default:
