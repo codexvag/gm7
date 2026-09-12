@@ -447,6 +447,12 @@ export type Character = {
   equipment?: EquipmentSlots;
   gold?: number;
   partyId?: string;
+  questProgress?: Record<string, boolean>;
+  worldFlags?: Record<string, boolean>;
+  act?: 1 | 2 | 3;
+  location?: number;
+  biome?: BiomeType;
+  activeMicroAdventureId?: string;
   updatedAt?: number;
   lastSeen?: number;
 };
@@ -475,6 +481,9 @@ export type Enemy = {
   x: number;
   y: number;
   conditions?: string[];
+  biome?: BiomeType;
+  partyId?: string;
+  ownerCharId?: string;
   updatedAt?: number;
 };
 
@@ -903,8 +912,45 @@ export function newCharacter(): Character {
       mainHand: 'espada-longa',
       offHand: 'escudo'
     },
-    gold: 50
+    gold: 50,
+    questProgress: {},
+    worldFlags: {},
+    act: 1,
+    location: 0,
+    biome: 'village'
   };
+}
+
+export function syncPartyProgression(
+  characters: Character[],
+  partyId: string | undefined,
+  questUpdates: Record<string, boolean>,
+  flagUpdates?: Record<string, boolean>
+): void {
+  if (!partyId) return;
+  const now = Date.now();
+  for (const c of characters) {
+    if (c.partyId === partyId) {
+      if (!c.questProgress) c.questProgress = {};
+      Object.assign(c.questProgress, questUpdates);
+      if (flagUpdates) {
+        if (!c.worldFlags) c.worldFlags = {};
+        Object.assign(c.worldFlags, flagUpdates);
+      }
+      c.updatedAt = now;
+    }
+  }
+}
+
+export function mergePartyProgress(inviter: Character, receiver: Character): {
+  questProgress: Record<string, boolean>;
+  worldFlags: Record<string, boolean>;
+  act: 1 | 2 | 3;
+} {
+  const mergedQuests = { ...(inviter.questProgress || {}), ...(receiver.questProgress || {}) };
+  const mergedFlags = { ...(inviter.worldFlags || {}), ...(receiver.worldFlags || {}) };
+  const highestAct = Math.max(inviter.act || 1, receiver.act || 1) as 1 | 2 | 3;
+  return { questProgress: mergedQuests, worldFlags: mergedFlags, act: highestAct };
 }
 
 export const DND_5E_XP_TABLE = [

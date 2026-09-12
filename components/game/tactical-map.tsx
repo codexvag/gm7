@@ -2,8 +2,34 @@
 'use client';
 
 
-function DndTokens({ displayHeroes, enemies, npcs, corpses, onLootCorpse, currentBiome, gridSize, selectedHeroId, selectedEnemyId, activeTurnId, targetingAction, isCombat, activeVfx, contextEnemy, setContextEnemy, onSelectToken, onTargetEnemy, onTalkNpc, onInteractPlayer, currentHeroX, currentHeroY }: any) {
-  const getStatusClass = (condition) => {
+function DndTokens({
+  displayHeroes,
+  enemies,
+  npcs,
+  corpses,
+  onLootCorpse,
+  currentBiome,
+  gridSize,
+  selectedHeroId,
+  selectedEnemyId,
+  activeTurnId,
+  targetingAction,
+  isCombat,
+  activeVfx,
+  tokenRecoils,
+  slashVfx,
+  healVfx,
+  lootSparkles,
+  contextEnemy,
+  setContextEnemy,
+  onSelectToken,
+  onTargetEnemy,
+  onTalkNpc,
+  onInteractPlayer,
+  currentHeroX,
+  currentHeroY
+}: any) {
+  const getStatusClass = (condition: string) => {
     const c = condition.toLowerCase();
     if (c.includes('envenenad') || c.includes('poison')) return 'status-poisoned';
     if (c.includes('queimand') || c.includes('burn') || c.includes('fogo')) return 'status-burning';
@@ -13,7 +39,7 @@ function DndTokens({ displayHeroes, enemies, npcs, corpses, onLootCorpse, curren
     if (c.includes('invisível') || c.includes('invisible')) return 'status-invisible';
     return '';
   };
-  const getStatusDotColor = (condition) => {
+  const getStatusDotColor = (condition: string) => {
     const c = condition.toLowerCase();
     if (c.includes('envenenad') || c.includes('poison')) return 'bg-green-400';
     if (c.includes('queimand') || c.includes('burn')) return 'bg-orange-400';
@@ -30,18 +56,55 @@ function DndTokens({ displayHeroes, enemies, npcs, corpses, onLootCorpse, curren
     return dist <= 1;
   };
 
+  const getRecoilStyle = (id: string) => {
+    const recoil = tokenRecoils?.[id];
+    if (!recoil) return undefined;
+    const isCrit = recoil.type === 'crit';
+    const isMiss = recoil.type === 'miss';
+    const isHeal = recoil.type === 'heal';
+    return {
+      transform: `translate(${recoil.dx}px, ${recoil.dy}px) ${isCrit ? 'scale(1.25)' : isMiss ? 'scale(0.92)' : isHeal ? 'scale(1.12)' : 'scale(1.08)'}`,
+      filter: isCrit
+        ? 'brightness(2.2) drop-shadow(0 0 16px rgba(239,68,68,1)) drop-shadow(0 0 25px rgba(245,158,11,0.9))'
+        : isHeal
+        ? 'brightness(1.6) drop-shadow(0 0 16px rgba(52,211,153,0.95))'
+        : isMiss
+        ? 'brightness(1.2) drop-shadow(0 0 8px rgba(147,197,253,0.8))'
+        : 'brightness(1.8) drop-shadow(0 0 12px rgba(239,68,68,0.9))',
+      transition: 'transform 70ms cubic-bezier(0.1, 0.9, 0.2, 1), filter 70ms ease'
+    };
+  };
+
+  const visibleHeroes = (displayHeroes || []).filter((hero: any) => {
+    if (!hero) return false;
+    if (currentBiome === 'village') return !hero.biome || hero.biome === 'village';
+    return hero.biome === currentBiome;
+  });
+
+  const selectedHero = (displayHeroes || []).find((h: any) => h.id === selectedHeroId);
+  const visibleEnemies = (enemies || []).filter((enemy: any) => {
+    if (!enemy || enemy.hp <= 0) return false;
+    if (currentBiome === 'village') return false;
+    const enemyBiome = enemy.biome || 'forest';
+    if (enemyBiome !== currentBiome) return false;
+    if (selectedHero?.partyId && enemy.partyId && enemy.partyId !== selectedHero.partyId) return false;
+    if (!selectedHero?.partyId && enemy.ownerCharId && enemy.ownerCharId !== selectedHero?.id) return false;
+    return true;
+  });
+
   return (
     <>
-      {displayHeroes.map(hero => {
+      {visibleHeroes.map((hero: any) => {
         const isSelected = hero.id === selectedHeroId;
         const isActiveTurn = isCombat && (hero.id === activeTurnId);
         const hpRatio = hero.hp / hero.maxHp;
         const conditions = hero.conditions || [];
-        const statusClasses = conditions.map(c => getStatusClass(c)).filter(Boolean).join(' ');
+        const statusClasses = conditions.map((c: string) => getStatusClass(c)).filter(Boolean).join(' ');
         
         const leftPerc = (hero.x / gridSize) * 100;
         const topPerc = (hero.y / gridSize) * 100;
         const sizePerc = 100 / gridSize;
+        const recoilStyle = getRecoilStyle(hero.id);
 
         if (hero.hp <= 0) {
           return (
@@ -77,11 +140,22 @@ function DndTokens({ displayHeroes, enemies, npcs, corpses, onLootCorpse, curren
                  if (onInteractPlayer && hero.id !== selectedHeroId) onInteractPlayer(hero);
                  else onSelectToken('hero', hero.id);
                }}>
-            <div className={`relative w-[85%] h-[85%] max-w-[42px] max-h-[42px] rounded-full flex flex-col items-center justify-center cursor-pointer shadow-[0_4px_10px_rgba(0,0,0,0.6)] transition-transform ${hero.isWalking ? 'token-walking-active scale-110' : 'token-human-sway hover:scale-105'} ${isActiveTurn ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black scale-115 shadow-[0_0_25px_rgba(251,191,36,0.9)] token-selected-pulse' : isSelected ? 'ring-2 ring-amber-400 ring-offset-1 ring-offset-black scale-110 token-selected-pulse' : `ring-2 ${ringColor}`} bg-gradient-to-br ${bgGradient} ${statusClasses}`}>
+            <div style={recoilStyle} className={`relative w-[85%] h-[85%] max-w-[42px] max-h-[42px] rounded-full flex flex-col items-center justify-center cursor-pointer shadow-[0_4px_10px_rgba(0,0,0,0.6)] transition-transform ${hero.isWalking ? 'token-walking-active scale-110' : 'token-human-sway hover:scale-105'} ${isActiveTurn ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black scale-115 shadow-[0_0_25px_rgba(251,191,36,0.9)] token-selected-pulse' : isSelected ? 'ring-2 ring-amber-400 ring-offset-1 ring-offset-black scale-110 token-selected-pulse' : `ring-2 ${ringColor}`} bg-gradient-to-br ${bgGradient} ${statusClasses}`}>
               <div className="absolute inset-[2px] rounded-full border border-white/10 pointer-events-none" />
               {isActiveTurn && <div className="absolute -inset-2 rounded-full border-2 border-amber-400 animate-ping opacity-60 pointer-events-none" />}
               {isActiveTurn && <div className="absolute -bottom-3.5 left-1/2 -translate-x-1/2 bg-amber-400 text-black font-black text-[8px] px-1.5 rounded-full uppercase tracking-wider shadow-lg z-30 animate-pulse pointer-events-none whitespace-nowrap">VEZ</div>}
-              {activeVfx[hero.id] && <div className={activeVfx[hero.id]} />}
+              {activeVfx?.[hero.id] && <div className={activeVfx[hero.id]} />}
+              {slashVfx?.[hero.id] && (
+                <div className="absolute -inset-4 pointer-events-none z-45 flex items-center justify-center animate-slash-sweep">
+                  <div className="w-16 h-1.5 bg-gradient-to-r from-transparent via-amber-200 to-transparent shadow-[0_0_20px_rgba(251,191,36,1)] rounded-full rotate-[-45deg] scale-125" />
+                </div>
+              )}
+              {healVfx?.[hero.id] && (
+                <div className="absolute -inset-3 pointer-events-none z-45 flex items-center justify-center heal-rise-anim">
+                  <div className="w-full h-full rounded-full border-2 border-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.95)] animate-ping" />
+                  <span className="absolute -top-4 font-black text-xs text-emerald-300 drop-shadow">+PV</span>
+                </div>
+              )}
               <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-[130%] max-w-[42px] h-[5px] bg-black/95 rounded-full border border-zinc-500/80 overflow-hidden shadow-lg z-20">
                 <div style={{ width: `${Math.min(100, hpRatio * 100)}%` }} className={`h-full transition-all duration-500 ease-out ${hpRatio > 0.5 ? 'bg-gradient-to-r from-emerald-500 to-green-400' : hpRatio > 0.2 ? 'bg-gradient-to-r from-amber-500 to-yellow-400' : 'bg-gradient-to-r from-red-600 to-red-400'}`} />
               </div>
@@ -90,7 +164,7 @@ function DndTokens({ displayHeroes, enemies, npcs, corpses, onLootCorpse, curren
               )}
               {conditions.length > 0 && (
                 <div className="absolute -top-1 -right-1 flex gap-0.5 z-20">
-                  {conditions.slice(0, 3).map((c, i) => <div key={i} className={`w-[6px] h-[6px] rounded-full ${getStatusDotColor(c)} shadow-sm border border-black`} title={c} />)}
+                  {conditions.slice(0, 3).map((c: string, i: number) => <div key={i} className={`w-[6px] h-[6px] rounded-full ${getStatusDotColor(c)} shadow-sm border border-black`} title={c} />)}
                 </div>
               )}
               <span className="font-serif font-black text-sm text-amber-100 drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">{hero.name[0]}</span>
@@ -99,18 +173,18 @@ function DndTokens({ displayHeroes, enemies, npcs, corpses, onLootCorpse, curren
         );
       })}
 
-      {enemies.map(enemy => {
-        if (enemy.hp <= 0) return null;
+      {visibleEnemies.map((enemy: any) => {
         const isSelected = enemy.id === selectedEnemyId;
         const isActiveTurn = isCombat && (enemy.id === activeTurnId);
         const hpRatio = enemy.hp / enemy.maxHp;
         const conditions = enemy.conditions || [];
-        const statusClasses = conditions.map(c => getStatusClass(c)).filter(Boolean).join(' ');
+        const statusClasses = conditions.map((c: string) => getStatusClass(c)).filter(Boolean).join(' ');
         const isTargeted = targetingAction && isInRange(enemy.x, enemy.y);
 
         const leftPerc = (enemy.x / gridSize) * 100;
         const topPerc = (enemy.y / gridSize) * 100;
         const sizePerc = 100 / gridSize;
+        const recoilStyle = getRecoilStyle(enemy.id);
 
         return (
           <div key={enemy.id}
@@ -126,11 +200,22 @@ function DndTokens({ displayHeroes, enemies, npcs, corpses, onLootCorpse, curren
                    onTargetEnemy(enemy.id);
                  }
                }}>
-            <div className={`relative w-[85%] h-[85%] max-w-[42px] max-h-[42px] rounded-full flex flex-col items-center justify-center cursor-pointer shadow-[0_4px_10px_rgba(0,0,0,0.6)] token-human-sway ${isActiveTurn ? 'ring-4 ring-red-500 ring-offset-2 ring-offset-black scale-115 shadow-[0_0_25px_rgba(239,68,68,0.9)] token-target-pulse' : isSelected ? 'ring-2 ring-red-500 ring-offset-1 ring-offset-black scale-110 token-target-pulse' : isTargeted ? 'ring-2 ring-amber-400/80 ring-offset-1 ring-offset-black scale-105 animate-pulse' : 'ring-[1.5px] ring-red-700/80 hover:scale-105'} bg-gradient-to-br from-red-900 via-red-950 to-zinc-950 transition-transform ${statusClasses}`}>
+            <div style={recoilStyle} className={`relative w-[85%] h-[85%] max-w-[42px] max-h-[42px] rounded-full flex flex-col items-center justify-center cursor-pointer shadow-[0_4px_10px_rgba(0,0,0,0.6)] token-human-sway ${isActiveTurn ? 'ring-4 ring-red-500 ring-offset-2 ring-offset-black scale-115 shadow-[0_0_25px_rgba(239,68,68,0.9)] token-target-pulse' : isSelected ? 'ring-2 ring-red-500 ring-offset-1 ring-offset-black scale-110 token-target-pulse' : isTargeted ? 'ring-2 ring-amber-400/80 ring-offset-1 ring-offset-black scale-105 animate-pulse' : 'ring-[1.5px] ring-red-700/80 hover:scale-105'} bg-gradient-to-br from-red-900 via-red-950 to-zinc-950 transition-transform ${statusClasses}`}>
               <div className="absolute inset-[1px] rounded-full border border-red-500/30 pointer-events-none" />
               {isActiveTurn && <div className="absolute -inset-2 rounded-full border-2 border-red-500 animate-ping opacity-60 pointer-events-none" />}
               {isActiveTurn && <div className="absolute -bottom-3.5 left-1/2 -translate-x-1/2 bg-red-600 text-white font-black text-[8px] px-1.5 rounded-full uppercase tracking-wider shadow-lg z-30 animate-pulse pointer-events-none whitespace-nowrap">VEZ</div>}
-              {activeVfx[enemy.id] && <div className={activeVfx[enemy.id]} />}
+              {activeVfx?.[enemy.id] && <div className={activeVfx[enemy.id]} />}
+              {slashVfx?.[enemy.id] && (
+                <div className="absolute -inset-4 pointer-events-none z-45 flex items-center justify-center animate-slash-sweep">
+                  <div className="w-16 h-1.5 bg-gradient-to-r from-transparent via-amber-200 to-transparent shadow-[0_0_20px_rgba(251,191,36,1)] rounded-full rotate-[-45deg] scale-125" />
+                </div>
+              )}
+              {healVfx?.[enemy.id] && (
+                <div className="absolute -inset-3 pointer-events-none z-45 flex items-center justify-center heal-rise-anim">
+                  <div className="w-full h-full rounded-full border-2 border-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.95)] animate-ping" />
+                  <span className="absolute -top-4 font-black text-xs text-emerald-300 drop-shadow">+PV</span>
+                </div>
+              )}
               <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-[130%] max-w-[42px] h-[5px] bg-black/95 rounded-full border border-zinc-500/80 overflow-hidden shadow-lg z-20">
                 <div style={{ width: `${Math.min(100, hpRatio * 100)}%` }} className={`h-full transition-all duration-500 ease-out ${hpRatio > 0.5 ? 'bg-gradient-to-r from-red-500 to-rose-400' : hpRatio > 0.2 ? 'bg-gradient-to-r from-amber-500 to-orange-400' : 'bg-gradient-to-r from-red-700 to-red-500'}`} />
               </div>
@@ -139,12 +224,27 @@ function DndTokens({ displayHeroes, enemies, npcs, corpses, onLootCorpse, curren
               )}
               {conditions.length > 0 && (
                 <div className="absolute -top-1 -right-1 flex gap-0.5 z-20">
-                  {conditions.slice(0, 3).map((c, i) => <div key={i} className={`w-[6px] h-[6px] rounded-full ${getStatusDotColor(c)} shadow-sm border border-black`} title={c} />)}
+                  {conditions.slice(0, 3).map((c: string, i: number) => <div key={i} className={`w-[6px] h-[6px] rounded-full ${getStatusDotColor(c)} shadow-sm border border-black`} title={c} />)}
                 </div>
               )}
               {isTargeted && <div className="absolute inset-0 rounded-full border-2 border-dashed border-amber-400/70 animate-spin-slow pointer-events-none z-15" />}
               <span className="font-serif font-black text-sm text-red-200 drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">{enemy.name[0]}</span>
             </div>
+          </div>
+        );
+      })}
+
+      {/* LOOT SPARKLES POPPING ANIMATION OVER RECENTLY LOOTED TILES */}
+      {(lootSparkles || []).map((sp: any) => {
+        const leftP = (sp.x / gridSize) * 100;
+        const topP = (sp.y / gridSize) * 100;
+        return (
+          <div
+            key={sp.id}
+            style={{ left: `${leftP}%`, top: `${topP}%` }}
+            className="absolute z-50 pointer-events-none loot-sparkle-anim flex flex-col items-center"
+          >
+            <span className="text-xl filter drop-shadow-[0_0_12px_rgba(245,158,11,1)]">✨🪙✨</span>
           </div>
         );
       })}
@@ -183,7 +283,11 @@ function DndTokens({ displayHeroes, enemies, npcs, corpses, onLootCorpse, curren
 
       {/* RENDER GROUND CORPSES WITH PROCEDURAL LOOT */}
       {(corpses || [])
-        .filter((c: any) => !c.biome || c.biome === currentBiome)
+        .filter((c: any) => {
+          if (!c) return false;
+          const corpseBiome = c.biome || 'forest';
+          return corpseBiome === currentBiome;
+        })
         .map((corpse: any) => {
           const dist = Math.max(Math.abs(currentHeroX - corpse.x), Math.abs(currentHeroY - corpse.y));
           const isNear = dist <= 1;
@@ -401,6 +505,10 @@ interface TacticalMapProps {
   biome?: BiomeType;
   onInteractPlayer?: (hero: Character) => void;
   screenShake?: boolean;
+  tokenRecoils?: Record<string, { dx: number; dy: number; type: 'hit' | 'crit' | 'miss' | 'heal'; timestamp: number }>;
+  slashVfx?: Record<string, { timestamp: number }>;
+  healVfx?: Record<string, { timestamp: number }>;
+  lootSparkles?: { x: number; y: number; id: string }[];
 }
 
 export function TacticalMap({
@@ -433,7 +541,11 @@ export function TacticalMap({
   movementUsed = 0,
   biome = 'village',
   onInteractPlayer,
-  screenShake
+  screenShake,
+  tokenRecoils,
+  slashVfx,
+  healVfx,
+  lootSparkles
 }: TacticalMapProps) {
   const [fogOfWar, setFogOfWar] = useState(true);
   const [zoomScale, setZoomScale] = useState(1);
@@ -1222,6 +1334,10 @@ export function TacticalMap({
               targetingAction={targetingAction}
               isCombat={isCombat}
               activeVfx={activeVfx}
+              tokenRecoils={tokenRecoils}
+              slashVfx={slashVfx}
+              healVfx={healVfx}
+              lootSparkles={lootSparkles}
               contextEnemy={contextEnemy}
               setContextEnemy={setContextEnemy}
               onSelectToken={onSelectToken}

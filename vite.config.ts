@@ -7,8 +7,8 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 function gameWebSocketPlugin() {
   return {
     name: "game-websocket-server",
-    configureServer(server) {
-      server.httpServer?.on("upgrade", async (req, socket, head) => {
+    configureServer(server: any) {
+      server.httpServer?.on("upgrade", async (req: any, socket: any, head: any) => {
         try {
           const url = new URL(req.url || "", "http://localhost");
           if (url.pathname === "/api/game/ws") {
@@ -20,7 +20,7 @@ function gameWebSocketPlugin() {
             const wss = server.__gameWss;
             const rooms = server.__gameRooms;
             
-            wss.handleUpgrade(req, socket, head, async (clientWs) => {
+            wss.handleUpgrade(req, socket, head, async (clientWs: any) => {
               const roomId = url.searchParams.get("room") || "mmo-world-village";
               if (!rooms.has(roomId)) {
                 rooms.set(roomId, new Set());
@@ -28,7 +28,7 @@ function gameWebSocketPlugin() {
               const roomClients = rooms.get(roomId);
               roomClients.add(clientWs);
               
-              clientWs.on("message", (message) => {
+              clientWs.on("message", (message: any) => {
                 for (const client of roomClients) {
                   if (client !== clientWs && client.readyState === 1) {
                     client.send(message.toString());

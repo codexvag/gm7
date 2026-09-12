@@ -82,7 +82,8 @@ export async function POST(req: NextRequest) {
         'Visitar a Alquimista Elenor para recolher poções de cura'
       ];
 
-      const s: State = JSON.parse(room.state);
+      const latestRoom = await db.prepare('SELECT state, version FROM rooms WHERE id=?').bind(room.id).first<{ state: string; version: number }>() || room;
+      const s: State = JSON.parse(latestRoom.state);
       if (text) s.logs.push(entry(text, 'player'));
       s.logs.push(entry(fallbackNarrative, 'gm'));
       s.logs = s.logs.slice(-200);

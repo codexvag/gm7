@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
         .prepare('SELECT room FROM members WHERE user=?')
         .bind(user.userId)
         .all<{ room: string }>();
-      const roomIds = userRooms.results?.map((r) => r.room) || [];
+      const roomIds = userRooms.results?.map((r: any) => r.room) || [];
       for (const roomId of roomIds) {
         await db.prepare('DELETE FROM members WHERE room=?').bind(roomId).run();
         await db.prepare('DELETE FROM rooms WHERE id=?').bind(roomId).run();

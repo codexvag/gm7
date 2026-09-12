@@ -236,6 +236,10 @@ export default function Game() {
   useEffect(() => {
     selectedRef.current = selected;
   }, [selected]);
+  const selectedEnemyIdRef = React.useRef<string>(selectedEnemyId);
+  useEffect(() => {
+    selectedEnemyIdRef.current = selectedEnemyId;
+  }, [selectedEnemyId]);
   const userRef = React.useRef<string>(user);
   useEffect(() => {
     userRef.current = user;
@@ -245,11 +249,22 @@ export default function Game() {
   const [showGmSidebar, setShowGmSidebar] = useState(false);
   const [showNarrativeBox, setShowNarrativeBox] = useState(true);
   const [activeProjectiles, setActiveProjectiles] = useState<ProjectileVfx[]>([]);
+
+  // Physical token recoil, slash/heal VFX and loot sparkles
+  const [tokenRecoils, setTokenRecoils] = useState<Record<string, { dx: number; dy: number; type: 'hit' | 'crit' | 'miss' | 'heal'; timestamp: number }>>({});
+  const [slashVfx, setSlashVfx] = useState<Record<string, { timestamp: number }>>({});
+  const [healVfx, setHealVfx] = useState<Record<string, { timestamp: number }>>({});
+  const [lootSparkles, setLootSparkles] = useState<{ x: number; y: number; id: string }[]>([]);
+
   const pendingVfxRef = React.useRef<{
     projectile: ProjectileVfx;
     floatingText: FloatingNumber;
     narrateCtx: string;
     shouldNarrate?: boolean;
+    targetId?: string;
+    attackerPos?: { x: number; y: number };
+    targetPos?: { x: number; y: number };
+    isMelee?: boolean;
   } | null>(null);
   const [isBottomHudMinimized, setIsBottomHudMinimized] = useState(false);
   const [currentAct, setCurrentAct] = useState<1 | 2 | 3>(1);
@@ -264,19 +279,41 @@ export default function Game() {
     generateBattlemap('village', 12, 12345)
   );
 
-  // Sync battlemap with biome and size
-  useEffect(() => {
-    setOrganicBattlemap(
-      generateBattlemap(battlemapBiome, dungeonSize as 8 | 12 | 16, battlemapSeed)
-    );
-  }, [battlemapBiome, dungeonSize, battlemapSeed]);
-
-  // Sync biome from server room state
-  useEffect(() => {
-    if (room?.state?.biome && room.state.biome !== battlemapBiome) {
-      setBattlemapBiome(room.state.biome);
+  // Trigger tactile token impact recoil
+  const triggerRecoil = useCallback((
+    targetId: string,
+    attackerPos?: { x: number; y: number } | null,
+    targetPos?: { x: number; y: number } | null,
+    type: 'hit' | 'crit' | 'miss' | 'heal' = 'hit'
+  ) => {
+    let dx = 0;
+    let dy = 0;
+    if (type === 'heal') {
+      dy = -12;
+    } else if (type === 'miss') {
+      dx = (Math.random() > 0.5 ? 1 : -1) * 14;
+    } else if (attackerPos && targetPos) {
+      const angle = Math.atan2(targetPos.y - attackerPos.y, targetPos.x - attackerPos.x);
+      const force = type === 'crit' ? 24 : 14;
+      dx = Math.cos(angle) * force;
+      dy = Math.sin(angle) * force;
+    } else {
+      dx = (Math.random() - 0.5) * 18;
+      dy = (Math.random() - 0.5) * 18;
     }
-  }, [room?.state?.biome, battlemapBiome]);
+    setTokenRecoils((prev) => ({
+      ...prev,
+      [targetId]: { dx, dy, type, timestamp: Date.now() }
+    }));
+    setTimeout(() => {
+      setTokenRecoils((prev) => {
+        const next = { ...prev };
+        delete next[targetId];
+        return next;
+      });
+    }, 450);
+  }, []);
+
 
   // Escape key listener to exit targeting mode
   useEffect(() => {
@@ -306,12 +343,12 @@ export default function Game() {
       const prevChars = prev.state?.characters || [];
 
       // Authoritative active character list from server, protected against optimistic rollback
-      // for the local player's recent movements
+      // for the local player's recent movements (2500ms safety window for Render latency)
       const activeCharIds = new Set(incomingChars.map((c) => c.id));
       const protectedChars = incomingChars.map((char: Character) => {
         const shield = localMoveShieldRef.current[char.id];
         if (shield) {
-          if (now - shield.time < 1500) {
+          if (now - shield.time < 2500) {
             return { ...char, x: shield.x, y: shield.y };
           } else {
             delete localMoveShieldRef.current[char.id];
@@ -324,20 +361,29 @@ export default function Game() {
       for (const c of prevChars) {
         if (!activeCharIds.has(c.id)) {
           const shield = localMoveShieldRef.current[c.id];
-          if (shield && now - shield.time < 1500) {
+          if (shield && now - shield.time < 2500) {
             protectedChars.push({ ...c, x: shield.x, y: shield.y });
           }
         }
       }
 
-      // Merge enemies the same way (keeps remote casters + boss in sync non-destructively)
-      const prevEnemies = prev.state?.enemies || [];
-      const incomingEnemies = newRoom.state?.enemies || [];
-      const enemyById = new Map<string, Enemy>();
-      for (const e of prevEnemies) enemyById.set(e.id, e);
-      for (const e of incomingEnemies) {
-        const existing = enemyById.get(e.id);
-        if (!existing || (e.updatedAt ?? 0) >= (existing.updatedAt ?? 0)) enemyById.set(e.id, e);
+      // Authoritative enemy sync:
+      // Scope enemies strictly to current player/party biome without blanket village wiping in MMO
+      const isMmo = newRoom.id === 'mmo-world-village';
+      const curHero = protectedChars.find((c) => c.id === selectedRef.current);
+      const heroBiome = curHero?.biome || (isMmo ? 'village' : (newRoom.state?.biome || 'village'));
+      let authoritativeEnemies = (newRoom.state?.enemies || []).filter((e) => {
+        if (heroBiome === 'village') return false;
+        if (e.biome && e.biome !== heroBiome) return false;
+        if (curHero?.partyId && e.partyId && e.partyId !== curHero.partyId) return false;
+        if (!curHero?.partyId && e.ownerCharId && e.ownerCharId !== curHero?.id) return false;
+        return true;
+      });
+
+      // Clear selected enemy if no longer in battle
+      const curEnemyId = selectedEnemyIdRef.current;
+      if (curEnemyId && !authoritativeEnemies.some((e) => e.id === curEnemyId)) {
+        setSelectedEnemyId('');
       }
 
       const protectedRoom: Room = {
@@ -347,7 +393,7 @@ export default function Game() {
           ...prev.state,
           ...newRoom.state,
           characters: protectedChars,
-          enemies: [...enemyById.values()].sort((a, b) => a.initiative - b.initiative)
+          enemies: authoritativeEnemies.sort((a, b) => a.initiative - b.initiative)
         }
       };
       roomRef.current = protectedRoom;
@@ -358,12 +404,14 @@ export default function Game() {
   // Data Loading
   const load = useCallback(async (id?: string) => {
     try {
-      const r = await fetch('/api/game' + (id ? '?room=' + encodeURIComponent(id) : ''));
+      const storedRoom = typeof window !== 'undefined' ? localStorage.getItem('last_active_room_id') : null;
+      const targetRoomId = id || roomRef.current?.id || storedRoom || 'mmo-world-village';
+      const r = await fetch('/api/game?room=' + encodeURIComponent(targetRoomId));
       const d = (await r.json()) as ApiData;
       if (!r.ok) {
         if (id) {
-          console.warn(`Mesa ${id} não pôde ser carregada (${d.error}), carregando mesa padrão.`);
-          return await load();
+          console.warn(`Mesa ${id} temporariamente indisponível (${d.error}), mantendo mesa ativa.`);
+          return d;
         }
         throw Error(d.error);
       }
@@ -377,17 +425,21 @@ export default function Game() {
       setUser(d.user || '');
       if (d.rooms && d.rooms.length > 0) setRooms(d.rooms);
       if (d.room) {
-        applyProtectedRoomState(d.room);
-
-        // ── Sync currentAct from server-persisted state ──
-        const serverAct = d.room.state.act || (d.room.state.location + 1);
-        if ([1, 2, 3].includes(serverAct)) {
-          setCurrentAct(serverAct as 1 | 2 | 3);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('last_active_room_id', d.room.id);
         }
+        applyProtectedRoomState(d.room);
 
         const heroes = d.room.state.characters || [];
         const isMmo = d.room.id === 'mmo-world-village';
         const myHeroes = heroes.filter((c: Character) => isMmo ? c.owner === d.user : (!c.owner || c.owner === d.user));
+
+        // ── Sync currentAct from hero progression in MMO or server room state ──
+        const activeHeroAct = myHeroes[0]?.act;
+        const serverAct = isMmo ? (activeHeroAct || d.room.state.act || 1) : (d.room.state.act || (d.room.state.location + 1));
+        if ([1, 2, 3].includes(serverAct)) {
+          setCurrentAct(serverAct as 1 | 2 | 3);
+        }
         setSelected((p) => {
           if (p && myHeroes.some((c: Character) => c.id === p)) {
             return p;
@@ -411,16 +463,15 @@ export default function Game() {
       return d;
     } catch (e) {
       console.warn('Sync notice:', e);
-      if (id) {
-        return await load();
-      }
+      return null;
     } finally {
       setLoading(false);
     }
   }, [applyProtectedRoomState]);
 
   useEffect(() => {
-    void load();
+    const initialRoom = (typeof window !== 'undefined' && localStorage.getItem('last_active_room_id')) || 'mmo-world-village';
+    void load(initialRoom);
   }, [load]);
 
   // Handle wipe URL parameter detection
@@ -680,6 +731,14 @@ export default function Game() {
               }
 
               case 'HERO_MOVED': {
+                // If this is the local hero and optimistic shield is active, ignore remote echo to prevent rollback on Render
+                const isLocalHero = msg.characterId === selectedRef.current;
+                const shield = localMoveShieldRef.current[msg.characterId];
+                const now = Date.now();
+                if (isLocalHero && shield && now - shield.time < 2500) {
+                  break;
+                }
+
                 // Trigger smooth 340ms waypoint walking animation with token sway
                 setRemoteWalkPath({
                   characterId: msg.characterId,
@@ -772,6 +831,29 @@ export default function Game() {
                     setTimeout(() => setHitStopType(null), newFloat.type === 'crit' ? 300 : 150);
                   } else if (newFloat.type === 'miss') {
                     playCombatSound('miss');
+                  }
+
+                  // Trigger physical recoil & directional slash
+                  const recoilType = msg.attackResult.isCrit ? 'crit' : msg.attackResult.hit ? 'hit' : 'miss';
+                  const attacker = msg.state.characters.find((c: any) => c.id === msg.actorId) ||
+                                   msg.state.enemies.find((e: any) => e.id === msg.actorId);
+                  triggerRecoil(
+                    msg.targetId,
+                    attacker ? { x: attacker.x, y: attacker.y } : null,
+                    { x: target.x, y: target.y },
+                    recoilType
+                  );
+
+                  // Slash sweep effect for melee attacks
+                  if (msg.attackResult.hit && (!msg.projectile || (attacker && Math.hypot(target.x - attacker.x, target.y - attacker.y) <= 1.5))) {
+                    setSlashVfx((prev) => ({ ...prev, [msg.targetId]: { timestamp: Date.now() } }));
+                    setTimeout(() => {
+                      setSlashVfx((prev) => {
+                        const next = { ...prev };
+                        delete next[msg.targetId];
+                        return next;
+                      });
+                    }, 400);
                   }
 
                   setTimeout(() => {
@@ -881,9 +963,9 @@ export default function Game() {
   }, [selected, room?.id, user, room?.state?.characters]);
 
   // General server action dispatch with queue to eliminate lag and prevent dropping fast clicks
-  async function action(a: Record<string, unknown>) {
+  async function action(a: Record<string, unknown>): Promise<ApiData | null> {
     setError('');
-    const task = actionQueueRef.current.then(async () => {
+    const task: Promise<ApiData | null> = actionQueueRef.current.then(async (): Promise<ApiData | null> => {
       setBusy(true);
       try {
         const curRoom = roomRef.current;
@@ -903,6 +985,9 @@ export default function Game() {
           if (r.status === 409) {
             if (d.room) {
               applyProtectedRoomState(d.room);
+              if (a.action === 'location' && !a._retried) {
+                return await action({ ...a, _retried: true, version: d.room.version });
+              }
             } else {
               await load(curRoom?.id);
             }
@@ -984,15 +1069,46 @@ export default function Game() {
   const active = (state?.characters || []).find((c) => c.id === selected && (isMmoRoom ? c.owner === user : true))
     || myHeroes[0]
     || (state?.characters || [])[0];
-  const location = (locations && locations[state?.location || 0]) || locations[0];
+  const activeLocIdx = active?.location ?? state?.location ?? 0;
+  const location = (locations && locations[activeLocIdx]) || locations[0];
   const canEdit = active && (owner || active.owner === user || !isMmoRoom);
   const turnId = state?.order[state.turn];
   const turnEntity = [...(state?.characters || []), ...(state?.enemies || [])].find((c) => c.id === turnId);
   const isHeroTurn = active && turnId === active.id;
   const isActBossDefeated = state?.enemies ? state.enemies.length > 0 && state.enemies.every((e) => e.hp <= 0) : false;
-  const livingEnemies = state?.enemies ? state.enemies.filter((e) => e.hp > 0) : [];
+  const curHeroBiome = active?.biome || (isMmoRoom ? 'village' : (state?.biome || 'village'));
+  const isHeroInVillage = curHeroBiome === 'village' || activeLocIdx === 0;
+  const isHeroInCombat = !isHeroInVillage && Boolean(state?.combat && (state.order?.includes(active?.id || '') || !isMmoRoom));
+  const livingEnemies = isHeroInVillage ? [] : (state?.enemies ? state.enemies.filter((e) => {
+    if (e.hp <= 0) return false;
+    const enemyBiome = e.biome || 'forest';
+    if (enemyBiome !== curHeroBiome) return false;
+    if (isMmoRoom) {
+      if (active?.partyId) return !e.partyId || e.partyId === active.partyId;
+      return !e.ownerCharId || e.ownerCharId === active?.id;
+    }
+    return true;
+  }) : []);
   const currentEnemy = livingEnemies.find((e) => e.id === selectedEnemyId) || livingEnemies[0] || null;
   const latestGmLog = state?.logs ? [...state.logs].reverse().find((l) => l.kind === 'gm') : null;
+
+  // Update biome reactively from active hero (supports individual/party biome traveling in MMO)
+  useEffect(() => {
+    const isMmo = room?.id === 'mmo-world-village';
+    const targetBiome = isMmo ? (active?.biome || 'village') : (active?.biome || room?.state?.biome || 'village');
+    if (targetBiome && targetBiome !== battlemapBiome) {
+      setBattlemapBiome(targetBiome);
+      setBattlemapSeed(Date.now());
+    }
+  }, [active?.biome, room?.state?.biome, room?.id, battlemapBiome]);
+
+  // Update act reactively from active hero or room
+  useEffect(() => {
+    const targetAct = active?.act || room?.state?.act;
+    if (targetAct && targetAct !== currentAct && (targetAct === 1 || targetAct === 2 || targetAct === 3)) {
+      setCurrentAct(targetAct as 1 | 2 | 3);
+    }
+  }, [active?.act, room?.state?.act, currentAct]);
 
   // Auto-focus user's active hero or current combat turn entity to eliminate requiring preliminary manual clicks
   useEffect(() => {
@@ -1093,6 +1209,28 @@ export default function Game() {
           playCombatSound('miss');
         }
 
+        // Trigger physical token recoil & directional slash
+        if (pending.targetId) {
+          const recoilType = pending.floatingText.type === 'crit' ? 'crit' : pending.floatingText.type === 'damage' ? 'hit' : 'miss';
+          triggerRecoil(
+            pending.targetId,
+            pending.attackerPos,
+            pending.targetPos,
+            recoilType
+          );
+
+          if (pending.isMelee && pending.floatingText.type !== 'miss') {
+            setSlashVfx((prev) => ({ ...prev, [pending.targetId!]: { timestamp: Date.now() } }));
+            setTimeout(() => {
+              setSlashVfx((prev) => {
+                const next = { ...prev };
+                delete next[pending.targetId!];
+                return next;
+              });
+            }, 400);
+          }
+        }
+
         setTimeout(() => {
           setFloatingTexts((prev) => prev.filter((f) => f.id !== pending.floatingText.id));
         }, 1600);
@@ -1103,7 +1241,7 @@ export default function Game() {
         void narrate('', pending.narrateCtx);
       }
     }
-  }, []);
+  }, [triggerRecoil, narrate]);
 
   // Complete Cache & Account Wipe Handler
   const handleWipeAllData = async () => {
@@ -1156,6 +1294,13 @@ export default function Game() {
       } else {
         pType = 'arrow';
       }
+    }
+
+    const dist = Math.max(Math.abs(active.x - target.x), Math.abs(active.y - target.y));
+    const isMelee = (curTargeting?.rangeSquares || 1) <= 1.5 && !actionName.includes('arco') && !actionName.includes('besta') && !actionName.includes('raio') && !actionName.includes('fogo') && !actionName.includes('mágico') && !actionName.includes('eldritch') && !actionName.includes('sagrad') && !actionName.includes('gelo');
+    if (isMelee && dist > 1) {
+      setError(`Alvo fora do alcance corpo a corpo (${dist} quadrados / ${(dist * 1.5).toFixed(1)}m). Aproxime-se a 1 quadrado (1.5m) de ${target.name} para desferir o golpe!`);
+      return;
     }
 
     // Call server action FIRST (authoritative SRD roll + enemy AI counter-attack)
@@ -1212,11 +1357,16 @@ export default function Game() {
         : '';
 
       // Queue VFX to fire when dice roll dismisses
+      const isMelee = (curTargeting?.rangeSquares || 1) <= 1.5;
       pendingVfxRef.current = {
         projectile: newProj,
         floatingText: newFloat,
         narrateCtx: narrateMessage,
-        shouldNarrate
+        shouldNarrate,
+        targetId: target.id,
+        attackerPos: { x: active.x, y: active.y },
+        targetPos: { x: target.x, y: target.y },
+        isMelee
       };
 
       // 2. Show Dice 3D Roll FIRST (fires VFX when it completes via handleDiceComplete)
@@ -1267,8 +1417,9 @@ export default function Game() {
 
     if (res && (res as any).healResult) {
       const hr = (res as any).healResult;
-      const posX = ((target.x + 0.5) / dungeonSize) * 100;
-      const posY = ((target.y + 0.5) / dungeonSize) * 100;
+      const curGrid = battlemapBiome === 'village' ? 8 : dungeonSize;
+      const posX = ((target.x + 0.5) / curGrid) * 100;
+      const posY = ((target.y + 0.5) / curGrid) * 100;
       const newFloat: FloatingNumber = {
         id: crypto.randomUUID(),
         x: posX,
@@ -1280,6 +1431,17 @@ export default function Game() {
       setTimeout(() => {
         setFloatingTexts((prev) => prev.filter((f) => f.id !== newFloat.id));
       }, 1600);
+
+      // Trigger heal visual pulse & upward float
+      setHealVfx((prev) => ({ ...prev, [target.id]: { timestamp: Date.now() } }));
+      triggerRecoil(target.id, null, null, 'heal');
+      setTimeout(() => {
+        setHealVfx((prev) => {
+          const next = { ...prev };
+          delete next[target.id];
+          return next;
+        });
+      }, 700);
 
       void narrate('', `${active.name} consumiu ${itemId.includes('maior') ? 'Poção de Cura Maior' : 'Poção de Cura'} em ${target.name}, restaurando ${hr.healAmount} PV!`);
     }
@@ -1317,38 +1479,85 @@ export default function Game() {
       const isDoran = chosen.id === 'doran';
       const isElenor = chosen.id === 'elenor';
       const isKaelen = chosen.id === 'kaelen';
+      const qp = active?.questProgress || state?.questProgress || {};
 
-      const options = isDoran
-        ? [
+      let dialogText = chosen.dialogue ? chosen.dialogue.join(' ') : chosen.description;
+      let options: { label: string; actionText: string }[] = [];
+
+      if (isDoran) {
+        if (qp.doran_talked) {
+          dialogText = 'A bênção sagrada de Valdoria já foi concedida ao seu grupo, bravos aventureiros! Consultem a Alquimista Elenor na oficina para receberem poções de cura e o Capitão Kaelen na ponte para autorização dos portões.';
+          options = [
+            { label: '🌿 Ir consultar a Alquimista Elenor agora', actionText: 'TALK_ELENOR' },
+            { label: '🛡️ Apresentar-se ao Capitão Kaelen na ponte', actionText: 'TALK_KAELEN' },
+            { label: 'Agradeço as sábias palavras, Ancião Doran.', actionText: 'O herói reafirma sua determinação ao Ancião Doran.' }
+          ];
+        } else {
+          dialogText = 'Criaturas feitas de cinzas e rancor espreitam além dos nossos muros. Como Ancião de Vila do Rio Verde, rogo a proteção dos deuses sobre vocês. Vão e expurguem a escuridão!';
+          options = [
             { label: 'Aceito a missão, Ancião Doran. O que nos aguarda na floresta?', actionText: `Pergunta ao Ancião Doran sobre o selo rompido e as criaturas de cinzas.` },
             { label: 'Conceda a bênção de Valdoria para a nossa expedição.', actionText: `Pede a bênção da vila e conselhos de sobrevivência a Doran.` },
             { label: 'Conversarei com Elenor e Kaelen antes de partir.', actionText: `Agradece ao Ancião e prepara-se com a guarda da vila.` }
-          ]
-        : isElenor
-        ? [
-            { label: '🛒 Abrir Empório Alquímico (Comprar & Vender Poções e Elixires)', actionText: 'OPEN_SHOP_ELENOR' },
-            { label: 'Preciso beber uma Poção de Cura agora para me recompor.', actionText: `Toma um gole de elixir com Elenor e revigora seus pontos de vida.` },
-            { label: 'Como usar as poções durante o combate sob regras 5e?', actionText: `Pergunta a Elenor como administrar poções como 1 Ação de combate.` },
-            { label: 'Guardei os frascos na mochila. Muito obrigado, Elenor!', actionText: `Agradece pelas poções e guarda os frascos na mochila.` }
-          ]
-        : isKaelen
-        ? [
-            { label: '🛒 Abrir Arsenal & Ferraria (Comprar & Vender Equipamentos 5e)', actionText: 'OPEN_SHOP_KAELEN' },
-            { label: 'Capitão Kaelen, soe o alarme! Iniciar combate contra invasores!', actionText: `Dá ordem para soar o alarme da vila e enfrentar a patrulha de cinzas!` },
-            { label: 'Quais são as regras de posicionamento e cobertura?', actionText: `Pede instruções militares sobre terreno e regras de 1 Ação em combate D&D 5e.` },
-            { label: 'Mantenham a guarda da ponte. Cuidaremos da floresta.', actionText: `Afirma ao Capitão que a guarda pode confiar nos aventureiros.` }
-          ]
-        : [
-            { label: 'O que você sabe sobre os arredores?', actionText: `Pergunta sobre a região a ${chosen.name}.` },
-            { label: 'Como posso ajudá-lo?', actionText: `Oferece auxílio a ${chosen.name}.` },
-            { label: 'Agradeço, continuarei explorando.', actionText: `Despede-se de ${chosen.name}.` }
           ];
+        }
+      } else if (isElenor) {
+        if (!qp.doran_talked) {
+          dialogText = 'Saudações, viajante! Antes de adquirir elixires arcanos, fale com o Ancião Doran na praça central para receber a bênção e a incumbência da vila.';
+          options = [
+            { label: '🕊️ Procurar o Ancião Doran na praça', actionText: 'TALK_DORAN' },
+            { label: '🛒 Abrir Empório Alquímico (Comprar & Vender)', actionText: 'OPEN_SHOP_ELENOR' }
+          ];
+        } else if (qp.elenor_talked) {
+          dialogText = 'As provisões e Poções de Cura já foram entregues ao seu grupo. Apressem-se ao Capitão Kaelen na ponte da vila para abrir os portões!';
+          options = [
+            { label: '🛡️ Falar com Capitão Kaelen na ponte', actionText: 'TALK_KAELEN' },
+            { label: '🛒 Abrir Empório Alquímico (Comprar & Vender)', actionText: 'OPEN_SHOP_ELENOR' },
+            { label: 'Como usar as poções durante o combate sob regras 5e?', actionText: `Pergunta a Elenor como administrar poções como 1 Ação de combate.` }
+          ];
+        } else {
+          dialogText = 'Doran avisou-me de sua expedição sagrada! Preparei elixires destilados das raízes de Valdoria. Tomem estas Poções de Cura para sobreviverem aos combates!';
+          options = [
+            { label: 'Receber Poções de Cura e marchar para o Capitão Kaelen', actionText: 'TALK_KAELEN' },
+            { label: '🛒 Abrir Empório Alquímico (Comprar & Vender)', actionText: 'OPEN_SHOP_ELENOR' },
+            { label: 'Como usar as poções durante o combate sob regras 5e?', actionText: `Pergunta a Elenor como administrar poções como 1 Ação de combate.` }
+          ];
+        }
+      } else if (isKaelen) {
+        if (!qp.elenor_talked) {
+          dialogText = 'Alto lá! Não posso autorizar a abertura dos portões sem que o grupo tenha se abastecido de Poções de Cura com a Alquimista Elenor.';
+          options = [
+            { label: '🌿 Ir falar com a Alquimista Elenor', actionText: 'TALK_ELENOR' },
+            { label: '🛒 Abrir Arsenal & Ferraria (Equipamentos 5e)', actionText: 'OPEN_SHOP_KAELEN' }
+          ];
+        } else if (qp.kaelen_talked) {
+          dialogText = 'Os portões da ponte estão abertos para vocês! A trilha da Floresta dos Sussurros conduz ao Menir Sagrado. Destruam a Sentinela de Cinzas!';
+          options = [
+            { label: '🌲 Marchar imediatamente para a Floresta dos Sussurros (Viajar)', actionText: 'TRAVEL_FOREST' },
+            { label: '🛒 Abrir Arsenal & Ferraria (Equipamentos 5e)', actionText: 'OPEN_SHOP_KAELEN' },
+            { label: 'Quais são as regras de posicionamento e cobertura?', actionText: `Pede instruções militares sobre terreno e regras de 1 Ação em combate D&D 5e.` }
+          ];
+        } else {
+          dialogText = 'Vejo que receberam a bênção de Doran e as poções de Elenor! A guarda confia na bravura de vocês. Concedo autorização para abrir os portões da ponte!';
+          options = [
+            { label: '🌲 Marchar para a Floresta dos Sussurros (Viajar)', actionText: 'TRAVEL_FOREST' },
+            { label: '🛒 Abrir Arsenal & Ferraria (Equipamentos 5e)', actionText: 'OPEN_SHOP_KAELEN' },
+            { label: 'Quais são as regras de posicionamento e cobertura?', actionText: `Pede instruções militares sobre terreno e regras de 1 Ação em combate D&D 5e.` }
+          ];
+        }
+      } else {
+        options = [
+          { label: 'O que você sabe sobre os arredores?', actionText: `Pergunta sobre a região a ${chosen.name}.` },
+          { label: 'Como posso ajudá-lo?', actionText: `Oferece auxílio a ${chosen.name}.` },
+          { label: 'Agradeço, continuarei explorando.', actionText: `Despede-se de ${chosen.name}.` }
+        ];
+      }
 
-      // Flag quest step progress on server
+      // Flag quest step progress on server (scoped to active hero and their party)
       void action({
         action: 'questStep',
+        character: active?.id,
         step: `${chosen.id}_talked`,
-        logText: `O herói conversou com ${chosen.name}.`
+        logText: `[Grupo] ${active?.name || 'O herói'} conversou com ${chosen.name}.`
       });
 
       // If talking to Elenor, grant 2 healing potions to active hero if not already present
@@ -1356,6 +1565,7 @@ export default function Game() {
         const newInv = active.inventory ? `${active.inventory}, pocao-cura:2` : 'pocao-cura:2';
         void action({
           action: 'character',
+          character: active.id,
           value: { ...active, inventory: newInv }
         });
       }
@@ -1364,7 +1574,7 @@ export default function Game() {
         id: chosen.id,
         name: chosen.name,
         role: chosen.role,
-        dialogText: chosen.dialogue ? chosen.dialogue.join(' ') : chosen.description,
+        dialogText,
         options
       });
     } else {
@@ -1397,6 +1607,7 @@ export default function Game() {
   };
 
   const handleTravel = async (b: BiomeType) => {
+    if (!active) return;
     const locIdx =
       b === 'village' ? 0
       : b === 'forest' ? 1
@@ -1405,12 +1616,11 @@ export default function Game() {
       : b === 'canyon' ? 4
       : 5;
     const destName = locations[locIdx]?.name || 'Novo Território';
-    const ok = await action({ action: 'location', location: locIdx, biome: b });
+    const ok = await action({ action: 'location', location: locIdx, biome: b, character: active.id });
     if (ok) {
       setBattlemapBiome(b);
       setBattlemapSeed(Date.now());
       setCurrentAct(Math.min(3, Math.max(1, locIdx >= 4 ? 3 : locIdx >= 2 ? 2 : 1)) as 1 | 2 | 3);
-      void narrate('', `O grupo de heróis viajou para ${destName}. O ambiente ao redor se transforma.`);
     }
   };
 
@@ -1667,9 +1877,9 @@ export default function Game() {
               notes={state?.notes || ''}
               onSaveNotes={(n) => void action({ action: 'notes', notes: n })}
               isOwner={owner}
-              questProgress={state?.questProgress}
-              worldFlags={state?.worldFlags}
-              activeAdventureId={state?.activeMicroAdventureId}
+              questProgress={active?.questProgress || state?.questProgress}
+              worldFlags={active?.worldFlags || state?.worldFlags}
+              activeAdventureId={active?.activeMicroAdventureId || state?.activeMicroAdventureId}
               onStartAdventure={handleStartAdventure}
               onChallengeDragon={handleChallengeDragon}
             />
@@ -1894,20 +2104,22 @@ export default function Game() {
 
                 {/* Center: Initiative Ribbon */}
                 <div className="flex-1 min-w-0 flex items-center justify-center">
-                  <InitiativeRibbon
-                    combat={Boolean(state?.combat)}
-                    round={state?.round || 1}
-                    turn={state?.turn || 0}
-                    order={state?.order || []}
-                    characters={state?.characters || []}
-                    enemies={state?.enemies || []}
-                    selectedTargetId={selectedEnemyId}
-                    onSelectTarget={(id) => {
-                      const isHero = state?.characters.some((c) => c.id === id);
-                      if (isHero) setSelected(id);
-                      else setSelectedEnemyId(id);
-                    }}
-                  />
+                  {!isHeroInVillage && isHeroInCombat && (
+                    <InitiativeRibbon
+                      combat={Boolean(state?.combat)}
+                      round={state?.round || 1}
+                      turn={state?.turn || 0}
+                      order={state?.order || []}
+                      characters={state?.characters || []}
+                      enemies={state?.enemies || []}
+                      selectedTargetId={selectedEnemyId}
+                      onSelectTarget={(id) => {
+                        const isHero = state?.characters.some((c) => c.id === id);
+                        if (isHero) setSelected(id);
+                        else setSelectedEnemyId(id);
+                      }}
+                    />
+                  )}
                 </div>
 
                 {/* Right: Biome Selector & Mobile Tab Switcher */}
@@ -2090,7 +2302,7 @@ export default function Game() {
                 <div className="absolute inset-0 z-0 flex items-center justify-center overflow-hidden">
                   <TacticalMap
                     characters={state?.characters || []}
-                    enemies={state?.enemies || []}
+                    enemies={isHeroInVillage ? [] : (state?.enemies || [])}
                     selectedHeroId={active?.id || selected}
                     selectedEnemyId={selectedEnemyId}
                     targetingAction={targetingAction}
@@ -2245,7 +2457,31 @@ export default function Game() {
                     corpses={state?.corpses || []}
                     onLootCorpse={async (corpseId) => {
                       if (!active) return;
+                      const corpse = (state?.corpses || []).find((c) => c.id === corpseId);
                       try { playSfx('loot'); } catch {}
+                      if (corpse) {
+                        const curGrid = battlemapBiome === 'village' ? 8 : dungeonSize;
+                        const posX = ((corpse.x + 0.5) / curGrid) * 100;
+                        const posY = ((corpse.y + 0.5) / curGrid) * 100;
+                        const sparkleId = crypto.randomUUID();
+                        setLootSparkles((prev) => [...prev, { x: posX, y: posY, id: sparkleId }]);
+                        setTimeout(() => {
+                          setLootSparkles((prev) => prev.filter((s) => s.id !== sparkleId));
+                        }, 950);
+
+                        const floatId = crypto.randomUUID();
+                        const lootText = corpse.gold > 0 ? `+${corpse.gold} PO 🪙` : (corpse.items?.length ? `+${corpse.items[0]} ✨` : 'Saqueado!');
+                        setFloatingTexts((prev) => [...prev, {
+                          id: floatId,
+                          x: posX,
+                          y: posY,
+                          text: lootText,
+                          type: 'loot'
+                        }]);
+                        setTimeout(() => {
+                          setFloatingTexts((prev) => prev.filter((f) => f.id !== floatId));
+                        }, 1800);
+                      }
                       await action({ action: 'lootCorpse', character: active.id, corpseId });
                     }}
                     onNavigatePortal={async (targetBiome) => {
@@ -2258,6 +2494,10 @@ export default function Game() {
                     movementUsed={state?.movementUsed || 0}
                     onInteractPlayer={(hero) => setInteractingPlayer(hero)}
                     screenShake={hitStopType === 'crit'}
+                    tokenRecoils={tokenRecoils}
+                    slashVfx={slashVfx}
+                    healVfx={healVfx}
+                    lootSparkles={lootSparkles}
                   />
                 </div>
 
@@ -2318,7 +2558,7 @@ export default function Game() {
                 )}
 
                 {/* ═══ FLOATING TACTICAL & OPEN WORLD COMBAT TURN CONTROLS ═══ */}
-                {state?.combat ? (
+                {!isHeroInVillage && state?.combat && isHeroInCombat ? (
                   <div className="absolute top-3 left-1/2 -translate-x-1/2 z-35 flex items-center gap-2 px-3.5 py-1.5 rounded-2xl bg-[#0b0f0b]/95 border-2 border-amber-500/90 shadow-[0_8px_32px_rgba(0,0,0,0.95)] backdrop-blur-xl animate-fade-in pointer-events-auto">
                     <div className="flex items-center gap-1.5 pr-2.5 border-r border-zinc-800 text-xs font-mono">
                       <span className="text-[10px] uppercase font-bold text-zinc-400">Rodada</span>
@@ -2405,7 +2645,7 @@ export default function Game() {
                       </div>
                     )}
                   </div>
-                ) : livingEnemies.length > 0 ? (
+                ) : !isHeroInVillage && livingEnemies.length > 0 ? (
                   /* Open World Free Combat Banner */
                   <div className="absolute top-3 left-1/2 -translate-x-1/2 z-35 flex items-center gap-2.5 px-3.5 py-1.5 rounded-2xl bg-[#0b0f0b]/95 border border-sky-500/80 shadow-[0_8px_30px_rgba(0,0,0,0.9)] backdrop-blur-xl animate-fade-in pointer-events-auto">
                     <div className="flex items-center gap-1.5 text-xs text-sky-200 font-serif">
@@ -2465,9 +2705,11 @@ export default function Game() {
                         </button>
                       </div>
                     </div>
-                    <p className="text-xs text-amber-100/95 leading-relaxed font-serif italic line-clamp-4">
-                      "{latestGmLog.text}"
-                    </p>
+                    <div className="max-h-56 sm:max-h-64 overflow-y-auto pr-1.5 custom-scrollbar">
+                      <p className="text-xs text-amber-100/95 leading-relaxed font-serif italic whitespace-pre-line">
+                        "{latestGmLog.text}"
+                      </p>
+                    </div>
                   </div>
                 )}
 
@@ -2667,9 +2909,12 @@ export default function Game() {
                 {/* 1.2 ON-SCREEN CAMPAIGN STEP TRACKER & STORY GUIDE */}
                 <CampaignTracker
                   state={state || null}
+                  activeHero={active}
                   onTalkNpc={(npcId) => handleTalkNpc(npcId)}
                   onTravel={(b) => handleTravel(b)}
-                  onStartCombat={() => void action({ action: 'encounter' })}
+                  onStartCombat={() => {
+                    if (active) void action({ action: 'startCombat', character: active.id });
+                  }}
                   onOpenJournal={() => setShowQuests(true)}
                 />
 
@@ -2680,9 +2925,9 @@ export default function Game() {
                     notes={state?.notes || ''}
                     onSaveNotes={(n) => void action({ action: 'notes', notes: n })}
                     isOwner={Boolean(owner)}
-                    questProgress={state?.questProgress}
-                    worldFlags={state?.worldFlags}
-                    activeAdventureId={state?.activeMicroAdventureId}
+                    questProgress={active?.questProgress || state?.questProgress}
+                    worldFlags={active?.worldFlags || state?.worldFlags}
+                    activeAdventureId={active?.activeMicroAdventureId || state?.activeMicroAdventureId}
                     onStartAdventure={handleStartAdventure}
                     onChallengeDragon={handleChallengeDragon}
                   />
@@ -2750,6 +2995,26 @@ export default function Game() {
                         });
                         setShowShop(true);
                         setActiveNpcDialog(null);
+                        return;
+                      }
+                      if (actionText === 'TALK_DORAN') {
+                        setActiveNpcDialog(null);
+                        handleTalkNpc('doran');
+                        return;
+                      }
+                      if (actionText === 'TALK_ELENOR') {
+                        setActiveNpcDialog(null);
+                        handleTalkNpc('elenor');
+                        return;
+                      }
+                      if (actionText === 'TALK_KAELEN') {
+                        setActiveNpcDialog(null);
+                        handleTalkNpc('kaelen');
+                        return;
+                      }
+                      if (actionText === 'TRAVEL_FOREST') {
+                        setActiveNpcDialog(null);
+                        void handleTravel('forest');
                         return;
                       }
                       void narrate('', `${active?.name || 'O herói'}: "${actionText}"`);

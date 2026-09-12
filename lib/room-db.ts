@@ -18,7 +18,23 @@ async function ensureTables(db: any): Promise<void> {
   await initPromise;
 }
 
-export async function database(): Promise<any> {
+export interface D1PreparedStatement {
+  bind: (...params: any[]) => {
+    first: <T = any>() => Promise<T | null>;
+    all: <T = any>() => Promise<{ results: T[]; success: boolean }>;
+    run: () => Promise<any>;
+  };
+  first: <T = any>() => Promise<T | null>;
+  all: <T = any>() => Promise<{ results: T[]; success: boolean }>;
+  run: () => Promise<any>;
+}
+
+export interface D1Database {
+  prepare: (query: string) => D1PreparedStatement;
+  batch: (statements: any[]) => Promise<void>;
+}
+
+export async function database(): Promise<D1Database> {
   const db = getRawDb();
   await ensureTables(db);
   
@@ -31,12 +47,12 @@ export async function database(): Promise<any> {
         bind: (...params: any[]) => {
           boundParams = params;
           return {
-            first: async <T = any>() => stmt.get(...boundParams) as T | undefined,
+            first: async <T = any>() => ((stmt.get(...boundParams) as T) ?? null),
             all: async <T = any>() => ({ results: stmt.all(...boundParams) as T[], success: true }),
             run: async () => stmt.run(...boundParams)
           };
         },
-        first: async <T = any>() => stmt.get() as T | undefined,
+        first: async <T = any>() => ((stmt.get() as T) ?? null),
         all: async <T = any>() => ({ results: stmt.all() as T[], success: true }),
         run: async () => stmt.run()
       };

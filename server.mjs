@@ -1,4 +1,4 @@
-﻿import express from 'express';
+import express from 'express';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import path from 'path';
@@ -22,62 +22,57 @@ if (!globalThis.__mmoRoomEventBus) {
 }
 const roomEventBus = globalThis.__mmoRoomEventBus;
 
-// Hook Next.js internal events to WebSocket broadcast
-roomEventBus.on('room:mmo-world-village:all', (payload) => {
-  const roomId = payload.roomId || 'mmo-world-village';
-  const roomClients = rooms.get(roomId);
-  if (roomClients) {
-    const wsMsg = JSON.stringify({
-      type: payload.actionType === 'move' ? 'HERO_MOVED' : 
-            payload.actionType === 'attack' ? 'ATTACK_RESULT' : 'SYNC_SNAPSHOT',
-      version: payload.version,
-      state: payload.state,
-      finalPos: payload.actionType === 'move'
-        ? {
-            x: payload.actionPayload?.x,
-            y: payload.actionPayload?.y
-          }
-        : undefined,
-      ...payload.actionPayload // spread characterId, waypoints, etc.
-    });
-    for (const client of roomClients) {
-      if (client.readyState === 1) client.send(wsMsg);
-    }
-  }
-});
+const hookedRooms = new Set();
 
-// A catch-all for other rooms
-roomEventBus.on('newListener', (event) => {
-  if (typeof event === 'string' && event.startsWith('room:')) {
-    roomEventBus.on(event, (payload) => {
-      const roomId = payload.roomId;
-      const roomClients = rooms.get(roomId);
-      if (roomClients) {
-         const wsMsg = JSON.stringify({
-          type: payload.actionType === 'move' ? 'HERO_MOVED' : 
-                payload.actionType === 'attack' ? 'ATTACK_RESULT' : 'SYNC_SNAPSHOT',
-          version: payload.version,
-          state: payload.state,
-      finalPos: payload.actionType === 'move'
-        ? {
-            x: payload.actionPayload?.x,
-            y: payload.actionPayload?.y
+function ensureRoomHooked(roomId) {
+  if (!roomId || hookedRooms.has(roomId)) return;
+  hookedRooms.add(roomId);
+
+  const eventName = roomId === 'mmo-world-village' ? 'room:mmo-world-village:all' : `room:${roomId}`;
+  roomEventBus.on(eventName, (payload) => {
+    const targetRoomId = payload.roomId || roomId;
+    const roomClients = rooms.get(targetRoomId);
+    if (roomClients) {
+      const originCharId = payload.actionPayload?.characterId;
+      const originUserId = payload.originUserId;
+      const wsMsg = JSON.stringify({
+        type: payload.actionType === 'move' ? 'HERO_MOVED' : 
+              payload.actionType === 'attack' ? 'ATTACK_RESULT' : 'SYNC_SNAPSHOT',
+        version: payload.version,
+        originUserId,
+        originCharId,
+        state: payload.state,
+        finalPos: payload.actionType === 'move'
+          ? {
+              x: payload.actionPayload?.x,
+              y: payload.actionPayload?.y
+            }
+          : undefined,
+        ...payload.actionPayload
+      });
+      for (const client of roomClients) {
+        if (client.readyState === 1) {
+          if (payload.actionType === 'move' && originCharId && client.characterId === originCharId) {
+            continue;
           }
-        : undefined,
-          ...payload.actionPayload
-        });
-        for (const client of roomClients) {
-          if (client.readyState === 1) client.send(wsMsg);
+          client.send(wsMsg);
         }
       }
-    });
-  }
-});
+    }
+  });
+}
+
+// Hook default MMO world
+ensureRoomHooked('mmo-world-village');
 
 wss.on('connection', (ws, request) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
   const roomId = url.searchParams.get('room') || 'mmo-world-village';
+  ensureRoomHooked(roomId);
   const userId = url.searchParams.get('userId') || 'anon';
+  const charId = url.searchParams.get('characterId') || '';
+  ws.userId = userId;
+  ws.characterId = charId;
   
   if (!rooms.has(roomId)) {
     rooms.set(roomId, new Set());
@@ -89,7 +84,12 @@ wss.on('connection', (ws, request) => {
     try {
       const parsed = JSON.parse(message.toString());
       if (parsed.type === 'PING') return;
-      if (parsed.type === 'PLAYER_JOIN') {
+      if (parsed.type === 'JOIN_ROOM') {
+        if (parsed.characterId) ws.characterId = parsed.characterId;
+        if (parsed.userId) ws.userId = parsed.userId;
+      } else if (parsed.type === 'PLAYER_JOIN') {
+        if (parsed.character?.id) ws.characterId = parsed.character.id;
+        if (parsed.userId) ws.userId = parsed.userId;
         const wsMsg = JSON.stringify({
           type: 'PLAYER_JOINED',
           roomId: parsed.roomId,
@@ -158,6 +158,49 @@ function createFetchRequest(req) {
 }
 
 app.use(express.json());
+
+// Native Server-Sent Events (SSE) stream endpoint for real-time multiplayer updates
+app.get('/api/game/stream', (req, res) => {
+  const roomId = req.query.room || 'mmo-world-village';
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
+  res.write(`event: connected\ndata: ${JSON.stringify({ roomId, timestamp: Date.now() })}\n\n`);
+
+  const onUpdate = (payload) => {
+    try {
+      res.write(`event: update\ndata: ${JSON.stringify(payload)}\n\n`);
+    } catch {}
+  };
+
+  const eventName = roomId === 'mmo-world-village' ? 'room:mmo-world-village:all' : `room:${roomId}`;
+  roomEventBus.on(eventName, onUpdate);
+  if (roomId === 'mmo-world-village') {
+    roomEventBus.on('room:mmo-world-village', onUpdate);
+  }
+
+  const pingTimer = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      clearInterval(pingTimer);
+    }
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(pingTimer);
+    roomEventBus.off(eventName, onUpdate);
+    if (roomId === 'mmo-world-village') {
+      roomEventBus.off('room:mmo-world-village', onUpdate);
+    }
+  });
+});
 
 app.all('/{*splat}', async (req, res) => {
   try {

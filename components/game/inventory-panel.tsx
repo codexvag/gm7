@@ -227,19 +227,21 @@ export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: Inven
               {Object.values(ITEMS_CATALOG).map((item) => {
                 const isEquipped = Object.values(equipment).includes(item.id);
 
-                const rarityBorders = {
+                const rarityBorders: Record<string, string> = {
                   comum: 'border-zinc-700 bg-zinc-950/70',
                   incomum: 'border-emerald-600/70 bg-emerald-950/20 text-emerald-300',
                   raro: 'border-blue-600/70 bg-blue-950/20 text-blue-300',
+                  muito_raro: 'border-purple-600/70 bg-purple-950/20 text-purple-300',
                   epico: 'border-purple-600/70 bg-purple-950/20 text-purple-300',
                   lendario: 'border-amber-500/80 bg-amber-950/30 text-amber-300'
-                }[item.rarity];
+                };
+                const borderClass = rarityBorders[item.rarity] || 'border-zinc-700 bg-zinc-950/70';
 
                 return (
                   <button
                     key={item.id}
                     onClick={() => setSelectedItem(item)}
-                    className={`relative flex flex-col p-2.5 rounded-xl border text-left transition-all hover:scale-[1.02] ${rarityBorders} ${
+                    className={`relative flex flex-col p-2.5 rounded-xl border text-left transition-all hover:scale-[1.02] ${borderClass} ${
                       selectedItem?.id === item.id ? 'ring-2 ring-amber-400' : ''
                     }`}
                   >

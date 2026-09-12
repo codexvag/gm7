@@ -489,6 +489,7 @@ export const MAP_COLLISION_PROFILES: Record<BiomeType, MapCollisionProfile> = {
   forest: {
     biome: 'forest',
     imageSrc: '/maps/mata.png',
+    gridSize: 8,
     obstacles: [
       // Bosque Denso & Espinheiros (Norte)
       {
@@ -544,6 +545,7 @@ export const MAP_COLLISION_PROFILES: Record<BiomeType, MapCollisionProfile> = {
   dungeon: {
     biome: 'dungeon',
     imageSrc: '/maps/dungeon.png',
+    gridSize: 8,
     obstacles: [
       // Muralha Externa Superior
       {

@@ -28,6 +28,8 @@ import {
   validateSpellRange,
   validateMovement,
   ITEMS_CATALOG,
+  syncPartyProgression,
+  mergePartyProgress,
   type State,
   type Character,
   type GroundCorpse,
@@ -96,7 +98,7 @@ export async function GET(req: NextRequest) {
         .prepare('SELECT room FROM members WHERE user=?')
         .bind(user.userId)
         .all<{ room: string }>();
-      const roomIds = userRooms.results?.map((r) => r.room) || [];
+      const roomIds = userRooms.results?.map((r: any) => r.room) || [];
       for (const roomId of roomIds) {
         await db.prepare('DELETE FROM members WHERE room=?').bind(roomId).run();
         await db.prepare('DELETE FROM rooms WHERE id=?').bind(roomId).run();
@@ -147,7 +149,18 @@ export async function GET(req: NextRequest) {
       ? userRooms
       : [{ id: MMO_ROOM_ID, name: MMO_ROOM_NAME }, ...userRooms];
 
-    const targetId = requestedId || (userRooms[0] ? (userRooms[0].id as string) : null);
+    let defaultRoomId = userRooms[0]?.id as string;
+    // Defend against falling back to empty private room: if user has a hero in MMO, prefer MMO_ROOM_ID
+    const mmoRoomRow = await db.prepare('SELECT state FROM rooms WHERE id=?').bind(MMO_ROOM_ID).first<{ state: string }>();
+    if (mmoRoomRow) {
+      try {
+        const mmoState = JSON.parse(mmoRoomRow.state);
+        if (Array.isArray(mmoState.characters) && mmoState.characters.some((ch: Character) => ch.owner === user.userId)) {
+          defaultRoomId = MMO_ROOM_ID;
+        }
+      } catch {}
+    }
+    const targetId = requestedId || defaultRoomId || MMO_ROOM_ID;
     let room: Room | null = null;
     if (targetId) {
       room = await db
@@ -187,15 +200,35 @@ export async function GET(req: NextRequest) {
       room = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(id).first<Room>();
     }
     let parsedState = room ? JSON.parse(room.state) : null;
-    if (parsedState && room?.id === MMO_ROOM_ID && Array.isArray(parsedState.characters)) {
-      const now = Date.now();
-      const initialCount = parsedState.characters.length;
-      parsedState.characters = parsedState.characters.filter((ch: Character) => {
-        if (ch.owner === user.userId) return true;
-        if (!ch.lastSeen) return true;
-        return (now - ch.lastSeen) < 60000;
-      });
-      if (parsedState.characters.length !== initialCount) {
+    if (parsedState && room?.id === MMO_ROOM_ID) {
+      let stateChanged = false;
+      if (Array.isArray(parsedState.characters)) {
+        const now = Date.now();
+        const initialCount = parsedState.characters.length;
+        parsedState.characters = parsedState.characters.filter((ch: Character) => {
+          if (ch.owner === user.userId) return true;
+          if (!ch.lastSeen) return true;
+          return (now - ch.lastSeen) < 900000;
+        });
+        if (parsedState.characters.length !== initialCount) stateChanged = true;
+      }
+      if (Array.isArray(parsedState.corpses)) {
+        for (const c of parsedState.corpses) {
+          if (c.biome === 'village') {
+            c.biome = 'forest';
+            stateChanged = true;
+          }
+        }
+      }
+      if (Array.isArray(parsedState.enemies)) {
+        for (const e of parsedState.enemies) {
+          if (!e.biome) {
+            e.biome = e.name.includes('Malakor') || e.name.includes('Abissal') ? 'dungeon' : 'forest';
+            stateChanged = true;
+          }
+        }
+      }
+      if (stateChanged) {
         void db.prepare('UPDATE rooms SET state=? WHERE id=?')
           .bind(JSON.stringify(parsedState), MMO_ROOM_ID)
           .run()
@@ -233,7 +266,7 @@ export async function POST(req: NextRequest) {
         .prepare('SELECT room FROM members WHERE user=?')
         .bind(user.userId)
         .all<{ room: string }>();
-      const roomIds = userRooms.results?.map((r) => r.room) || [];
+      const roomIds = userRooms.results?.map((r: any) => r.room) || [];
       for (const roomId of roomIds) {
         await db.prepare('DELETE FROM members WHERE room=?').bind(roomId).run();
         await db.prepare('DELETE FROM rooms WHERE id=?').bind(roomId).run();
@@ -354,13 +387,13 @@ export async function POST(req: NextRequest) {
     const currentUserId = user?.userId;
     const owner = isMmo || (currentUserId ? r.owner === currentUserId : false);
 
-    // Prune stale characters in MMO world (inactivity > 60s)
+    // Prune stale characters in MMO world (inactivity > 15min)
     if (isMmo && Array.isArray(s.characters)) {
       const now = Date.now();
       s.characters = s.characters.filter((ch: Character) => {
         if (currentUserId && ch.owner === currentUserId) return true;
         if (!ch.lastSeen) return true;
-        return (now - ch.lastSeen) < 60000;
+        return (now - ch.lastSeen) < 900000;
       });
     }
 
@@ -394,8 +427,28 @@ export async function POST(req: NextRequest) {
     const log = (text: string, kind: 'gm' | 'roll' | 'player' | 'system' = 'system') =>
       s.logs.push(entry(text, kind));
 
+    const recordProgression = (char: Character, questUpdates: Record<string, boolean>, flagUpdates?: Record<string, boolean>) => {
+      if (!char.questProgress) char.questProgress = {};
+      Object.assign(char.questProgress, questUpdates);
+      if (flagUpdates) {
+        if (!char.worldFlags) char.worldFlags = {};
+        Object.assign(char.worldFlags, flagUpdates);
+      }
+      touchChar(char);
+      if (char.partyId) {
+        syncPartyProgression(s.characters, char.partyId, questUpdates, flagUpdates);
+      }
+      if (!s.questProgress) s.questProgress = {};
+      Object.assign(s.questProgress, questUpdates);
+      if (flagUpdates) {
+        if (!s.worldFlags) s.worldFlags = {};
+        Object.assign(s.worldFlags, flagUpdates);
+      }
+    };
+
     let clientAttackResult: AttackResult | null = null;
     let clientHealResult: { targetId: string; targetName: string; healAmount: number; hpAfter: number; maxHp: number } | null = null;
+    let clientLootResult: { gold: number; items: string[]; x: number; y: number } | null = null;
 
     switch (a.action) {
       case 'character': {
@@ -457,41 +510,86 @@ export async function POST(req: NextRequest) {
         break;
       }
       case 'encounter': {
-        gm();
-        if (s.combat) throw Error('JÃ¡ existe um combate em andamento.');
-        if (!s.characters.some((x) => x.hp > 0)) throw Error('Crie um personagem consciente primeiro.');
-        s.enemies = [
-          {
+        const p = c || own();
+        if (!p) throw Error('Crie um personagem consciente primeiro.');
+        const heroBiome = (p.biome || s.biome || 'village') as string;
+        if (heroBiome === 'village' || (p.location ?? s.location ?? 0) === 0) {
+          throw Error('A Vila do Rio Verde é um santuário pacífico e seguro. Não há monstros hostis aqui.');
+        }
+        const partyId = p.partyId;
+
+        // Check if there are already living enemies for this party/hero in this biome
+        let myEnemies = (s.enemies || []).filter((e) => {
+          if (e.hp <= 0) return false;
+          if (e.biome && e.biome !== heroBiome) return false;
+          if (partyId) return !e.partyId || e.partyId === partyId;
+          return !e.ownerCharId || e.ownerCharId === p.id;
+        });
+
+        // If no enemies exist yet for this party/hero in this biome, spawn biome-appropriate ones
+        if (myEnemies.length === 0) {
+          const spawnTable: Record<string, { name: string; hp: number; maxHp: number; ac: number; attack: number; damage: string; x: number; y: number }[]> = {
+            village: [{ name: 'Espantalho Amaldiçoado', hp: 8, maxHp: 8, ac: 10, attack: 2, damage: '1d4+1', x: 6, y: 3 }],
+            forest: [
+              { name: 'Sentinela de Cinzas', hp: 9, maxHp: 9, ac: 11, attack: 2, damage: '1d4+1', x: 7, y: 3 },
+              { name: 'Lobo das Sombras', hp: 8, maxHp: 8, ac: 11, attack: 2, damage: '1d4+1', x: 6, y: 2 }
+            ],
+            ruins: [
+              { name: 'Fanático do Fogo Negro', hp: 16, maxHp: 16, ac: 13, attack: 4, damage: '1d6+2', x: 6, y: 3 },
+              { name: 'Cultista Brutamontes', hp: 14, maxHp: 14, ac: 12, attack: 3, damage: '1d8+1', x: 7, y: 4 }
+            ],
+            dungeon: [
+              { name: 'Guardião Espectral', hp: 18, maxHp: 18, ac: 13, attack: 3, damage: '1d6+2', x: 5, y: 2 },
+              { name: 'Escriba Sombrio', hp: 11, maxHp: 11, ac: 11, attack: 2, damage: '1d6', x: 6, y: 4 }
+            ]
+          };
+          const template = spawnTable[heroBiome] || spawnTable.forest;
+          const spawned: Enemy[] = template.map((t) => ({
             id: crypto.randomUUID(),
-            name: 'Sentinela de Cinzas',
-            hp: 9,
-            maxHp: 9,
-            ac: 11,
-            attack: 2,
-            damage: '1d4+1',
-            initiative: d20().raw + 1,
-            x: 7,
-            y: 3
-          }
-        ];
-        for (const p of s.characters) p.initiative = d20().raw + mod(p.stats[1]) + 3 - 2 * p.exhaustion; // +3 hero preparation bonus
-        for (const p of s.characters) touchChar(p);
-        for (const e of s.enemies) touchChar(e);
-        s.order = [...s.characters.filter((x) => x.hp > 0), ...s.enemies]
-          .sort((a, b) => b.initiative - a.initiative || a.id.localeCompare(b.id))
-          .map((x) => x.id);
+            ...t,
+            initiative: 0,
+            biome: heroBiome as any,
+            partyId,
+            ownerCharId: partyId ? undefined : p.id
+          }));
+          if (!s.enemies) s.enemies = [];
+          s.enemies.push(...spawned);
+          myEnemies = spawned;
+        }
+
         s.combat = true;
+        s.combatMode = 'tactical';
+        s.combatPartyId = partyId || p.id;
         s.round = 1;
+
+        const partyMembers = partyId
+          ? s.characters.filter((char) => char.partyId === partyId && char.hp > 0)
+          : [p];
+
+        for (const char of partyMembers) {
+          char.initiative = d20().raw + mod(char.stats[1]) + 3 - 2 * (char.exhaustion || 0);
+          touchChar(char);
+        }
+        for (const enemy of myEnemies) {
+          enemy.initiative = d20().raw + 1;
+          touchChar(enemy);
+        }
+
+        s.order = [...partyMembers, ...myEnemies]
+          .sort((a, b) => (b.initiative || 0) - (a.initiative || 0) || a.id.localeCompare(b.id))
+          .map((x) => x.id);
+
         s.turn = 0;
         s.actionUsed = false;
+        s.movementUsed = 0;
         log(
-          'Combate iniciado! Iniciativa 5e: ' +
+          `⚔️ Combate iniciado! Iniciativa 5e: ` +
             s.order
               .map((id) => {
-                const x = [...s.characters, ...s.enemies].find((x) => x.id === id)!;
-                return x.name + ' (' + x.initiative + ')';
+                const x = [...s.characters, ...s.enemies].find((x) => x.id === id);
+                return x ? `${x.name} (${x.initiative})` : id;
               })
-              .join(' â€¢ '),
+              .join(' • '),
           'roll'
         );
         executeEnemyAI(s);
@@ -499,20 +597,29 @@ export async function POST(req: NextRequest) {
       }
       case 'startCombat': {
         const p = own();
+        const heroBiome = (p.biome || s.biome || 'village') as string;
+        const partyId = p.partyId;
+
         s.combat = true;
         s.combatMode = 'tactical';
         s.round = 1;
-        const partyMembers = p.partyId
-          ? s.characters.filter((c) => c.partyId === p.partyId && c.hp > 0)
+        const partyMembers = partyId
+          ? s.characters.filter((c) => c.partyId === partyId && c.hp > 0)
           : [p];
-        s.combatPartyId = p.partyId || p.id;
+        s.combatPartyId = partyId || p.id;
 
         for (const char of partyMembers) {
           char.initiative = d20().raw + mod(char.stats[1]) + 3 - 2 * (char.exhaustion || 0);
           touchChar(char);
         }
 
-        const livingEnemies = s.enemies.filter((e) => e.hp > 0);
+        const livingEnemies = (s.enemies || []).filter((e) => {
+          if (e.hp <= 0) return false;
+          if (e.biome && e.biome !== heroBiome) return false;
+          if (partyId) return !e.partyId || e.partyId === partyId;
+          return !e.ownerCharId || e.ownerCharId === p.id;
+        });
+
         for (const enemy of livingEnemies) {
           enemy.initiative = d20().raw + 1;
           touchChar(enemy);
@@ -614,13 +721,16 @@ export async function POST(req: NextRequest) {
           }
 
           // Strict D&D 5e Action Economy enforcement for combatants
-          const curTurnId = s.order[s.turn];
-          if (curTurnId && curTurnId !== p.id) {
-            const activeCreature = [...s.characters, ...s.enemies].find((x) => x.id === curTurnId);
-            throw Error(`Não é o turno de ${p.name}. Turno atual: ${activeCreature ? activeCreature.name : 'Inimigo'}.`);
-          }
-          if (s.actionUsed) {
-            throw Error('Você já utilizou sua Ação neste turno. Mova-se pelo terreno ou clique em "Fim do Turno" para passar a vez.');
+          const isMyCombat = !isMmo || !s.combatPartyId || s.combatPartyId === (p.partyId || p.id);
+          if (isMyCombat) {
+            const curTurnId = s.order[s.turn];
+            if (curTurnId && curTurnId !== p.id) {
+              const activeCreature = [...s.characters, ...s.enemies].find((x) => x.id === curTurnId);
+              throw Error(`Não é o turno de ${p.name}. Turno atual: ${activeCreature ? activeCreature.name : 'Inimigo'}.`);
+            }
+            if (s.actionUsed) {
+              throw Error('Você já utilizou sua Ação neste turno. Mova-se pelo terreno ou clique em "Fim do Turno" para passar a vez.');
+            }
           }
         }
 
@@ -690,6 +800,7 @@ export async function POST(req: NextRequest) {
           try {
             const mobLoot = generateMobLoot(target.name, target.maxHp || 10, (s.act || 1) as any);
             if (!s.corpses) s.corpses = [];
+            const corpseBiome = target.biome || p.biome || s.biome || 'forest';
             const corpse: GroundCorpse = {
               id: `corpse-${target.id}-${Date.now()}`,
               name: `Restos de ${target.name}`,
@@ -698,7 +809,7 @@ export async function POST(req: NextRequest) {
               y: target.y ?? 4,
               gold: mobLoot.gold,
               items: mobLoot.items.map((it) => it.id),
-              biome: s.biome,
+              biome: corpseBiome,
               slainBy: p.name,
               createdAt: Date.now()
             };
@@ -709,16 +820,23 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        if (s.enemies.length > 0 && s.enemies.every((e) => e.hp <= 0)) {
-          if (!s.questProgress) s.questProgress = {};
-          if (s.biome === 'forest' || s.location === 1) {
-            s.questProgress.forest_cleared = true;
-          } else if (s.biome === 'dungeon' || s.location === 2) {
-            s.questProgress.malakor_defeated = true;
+        const myEnemies = (s.enemies || []).filter((e) => {
+          if (p.partyId) return !e.partyId || e.partyId === p.partyId;
+          return !e.ownerCharId || e.ownerCharId === p.id;
+        });
+        if (myEnemies.length > 0 && myEnemies.every((e) => e.hp <= 0)) {
+          const curBiome = p.biome || s.biome || 'village';
+          const curLoc = p.location ?? s.location ?? 0;
+          if (curBiome === 'forest' || curLoc === 1) {
+            recordProgression(p, { forest_cleared: true });
+          } else if (curBiome === 'dungeon' || curLoc === 2) {
+            recordProgression(p, { malakor_defeated: true });
           }
           s.combat = false;
+          s.combatPartyId = undefined;
+          s.order = (s.order || []).filter((id) => !myEnemies.some((e) => e.id === id) && id !== p.id && (!p.partyId || !s.characters.some((c) => c.partyId === p.partyId && c.id === id)));
           s.actionUsed = false;
-          log('âš”ï¸ Todos os inimigos foram vencidos! VitÃ³ria do grupo!', 'gm');
+          log('⚔️ Todos os inimigos foram vencidos! Vitória do grupo!', 'gm');
         }
 
         // If client specified immediate end of turn, advance
@@ -777,13 +895,16 @@ export async function POST(req: NextRequest) {
             log(`✨ ${p.name} conjurou magia e entrou na iniciativa da batalha! (Iniciativa: ${p.initiative})`, 'roll');
           }
 
-          const curTurnId = s.order[s.turn];
-          if (curTurnId && curTurnId !== p.id) {
-            const activeCreature = [...s.characters, ...s.enemies].find((x) => x.id === curTurnId);
-            throw Error(`Não é o turno de ${p.name}. Turno atual: ${activeCreature ? activeCreature.name : 'Inimigo'}.`);
-          }
-          if (s.actionUsed) {
-            throw Error('Você já utilizou sua Ação neste turno. Mova-se pelo terreno ou clique em "Fim do Turno" para passar a vez.');
+          const isMyCombat = !isMmo || !s.combatPartyId || s.combatPartyId === (p.partyId || p.id);
+          if (isMyCombat) {
+            const curTurnId = s.order[s.turn];
+            if (curTurnId && curTurnId !== p.id) {
+              const activeCreature = [...s.characters, ...s.enemies].find((x) => x.id === curTurnId);
+              throw Error(`Não é o turno de ${p.name}. Turno atual: ${activeCreature ? activeCreature.name : 'Inimigo'}.`);
+            }
+            if (s.actionUsed) {
+              throw Error('Você já utilizou sua Ação neste turno. Mova-se pelo terreno ou clique em "Fim do Turno" para passar a vez.');
+            }
           }
         }
 
@@ -861,6 +982,7 @@ export async function POST(req: NextRequest) {
             try {
               const mobLoot = generateMobLoot(target.name, target.maxHp || 10, (s.act || 1) as any);
               if (!s.corpses) s.corpses = [];
+              const corpseBiome = target.biome || p.biome || s.biome || 'forest';
               const corpse: GroundCorpse = {
                 id: `corpse-${target.id}-${Date.now()}`,
                 name: `Restos de ${target.name}`,
@@ -869,7 +991,7 @@ export async function POST(req: NextRequest) {
                 y: target.y ?? 4,
                 gold: mobLoot.gold,
                 items: mobLoot.items.map((it) => it.id),
-                biome: s.biome,
+                biome: corpseBiome,
                 slainBy: p.name,
                 createdAt: Date.now()
               };
@@ -880,17 +1002,24 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          if (s.enemies.length > 0 && s.enemies.every((e) => e.hp <= 0)) {
-            if (!s.questProgress) s.questProgress = {};
-            if (s.biome === 'forest' || s.location === 1) {
-              s.questProgress.forest_cleared = true;
-            } else if (s.biome === 'dungeon' || s.location === 2) {
-              s.questProgress.malakor_defeated = true;
-            }
-            s.combat = false;
-            s.actionUsed = false;
-            log('âš”ï¸ Todos os inimigos foram vencidos! VitÃ³ria do grupo!', 'gm');
+        const myEnemies = (s.enemies || []).filter((e) => {
+          if (p.partyId) return !e.partyId || e.partyId === p.partyId;
+          return !e.ownerCharId || e.ownerCharId === p.id;
+        });
+        if (myEnemies.length > 0 && myEnemies.every((e) => e.hp <= 0)) {
+          const curBiome = p.biome || s.biome || 'village';
+          const curLoc = p.location ?? s.location ?? 0;
+          if (curBiome === 'forest' || curLoc === 1) {
+            recordProgression(p, { forest_cleared: true });
+          } else if (curBiome === 'dungeon' || curLoc === 2) {
+            recordProgression(p, { malakor_defeated: true });
           }
+          s.combat = false;
+          s.combatPartyId = undefined;
+          s.order = (s.order || []).filter((id) => !myEnemies.some((e) => e.id === id) && id !== p.id && (!p.partyId || !s.characters.some((c) => c.partyId === p.partyId && c.id === id)));
+          s.actionUsed = false;
+          log('⚔️ Todos os inimigos foram vencidos! Vitória do grupo!', 'gm');
+        }
         } else if (a.healFormula) {
           const targetChar = s.characters.find((c) => c.id === (a.targetId || p.id));
           if (!targetChar) throw Error('Alvo invÃ¡lido para cura.');
@@ -930,13 +1059,14 @@ export async function POST(req: NextRequest) {
           throw Error(`Alvo muito distante para aplicar o item. Alcance de toque: 1 quadrado (1.5m).`);
         }
 
-        if (s.combat) {
+        const isMyCombat = !isMmo || !s.combatPartyId || s.combatPartyId === (p.partyId || p.id);
+        if (s.combat && isMyCombat) {
           const curTurnId = s.order[s.turn];
           if (curTurnId && curTurnId !== p.id) {
-            throw Error(`NÃ£o Ã© o turno de ${p.name}. Aguarde sua vez na ordem de iniciativa.`);
+            throw Error(`Não é o turno de ${p.name}. Aguarde sua vez na ordem de iniciativa.`);
           }
           if (s.actionUsed) {
-            throw Error('VocÃª jÃ¡ utilizou sua AÃ§Ã£o neste turno. Mova-se ou passe o turno.');
+            throw Error('Você já utilizou sua Ação neste turno. Mova-se ou passe o turno.');
           }
           s.actionUsed = true;
         }
@@ -1005,6 +1135,7 @@ export async function POST(req: NextRequest) {
         }
 
         touchChar(p);
+        clientLootResult = { gold: lootedGold, items: lootedItemNames, x: corpse.x, y: corpse.y };
         s.corpses.splice(corpseIndex, 1);
 
         log(`💰 ${p.name} saqueou os restos de ${corpse.enemyName}: +${lootedGold} PO${lootedItemNames.length ? ' e obteve [' + lootedItemNames.join(', ') + ']' : ''}!`, 'player');
@@ -1016,20 +1147,15 @@ export async function POST(req: NextRequest) {
         break;
       }
       case 'pass': {
+        const p = own();
+        const isMyCombat = !isMmo || !s.combatPartyId || s.combatPartyId === (p.partyId || p.id);
         const activeChar = s.characters.find((x) => x.id === s.order[s.turn]);
-        if (activeChar) {
-          if (a.character) {
-            const p = own();
-            if (p.id !== activeChar.id) throw Error('NÃ£o Ã© seu turno.');
-          } else {
-            if (!isMmo && !owner && activeChar.owner && activeChar.owner !== user.userId) {
-              throw Error('Aguarde o jogador ativo passar a vez.');
-            }
+        if (activeChar && isMyCombat) {
+          if (p.id !== activeChar.id && (!owner || !isMmo)) {
+            throw Error(`Não é seu turno. Aguarde o turno de ${activeChar.name}.`);
           }
-        } else {
-          gm();
         }
-        log(`Turno de ${activeChar?.name || c?.name || 'criatura'} concluÃ­do.`);
+        log(`Turno de ${activeChar?.name || p.name || 'criatura'} concluído.`);
         s.actionUsed = false;
         advance(s);
         executeEnemyAI(s);
@@ -1047,7 +1173,7 @@ export async function POST(req: NextRequest) {
         const p = own();
         const x = Number(a.x);
         const y = Number(a.y);
-        const biome = (s.biome || 'village') as 'village' | 'forest' | 'dungeon';
+        const biome = ((p.biome || s.biome || 'village') as string).toLowerCase() as 'village' | 'forest' | 'dungeon';
         const defaultBound = biome === 'village' ? 7 : 15;
         const maxBound = Number(a.maxBound ?? defaultBound);
         const validation = validateMovement(p, { x, y }, s, maxBound);
@@ -1090,34 +1216,45 @@ export async function POST(req: NextRequest) {
         gm();
         if (s.combat) throw Error('NÃ£o Ã© possÃ­vel descansar em combate.');
         for (const p of s.characters) {
-          p.hp = p.maxHp;
-          p.usedSlots = p.usedSlots.map(() => 0);
-          p.deathFail = 0;
           p.deathSuccess = 0;
           p.exhaustion = Math.max(0, p.exhaustion - 1);
           touchChar(p);
         }
-        log('O grupo concluiu um descanso longo (8h). PV e espaÃ§os de magia restaurados.', 'roll');
+        log('O grupo concluiu um descanso longo (8h). PV e espaços de magia restaurados.', 'roll');
         break;
       }
       case 'location': {
-        if (s.combat) throw Error('Encerre o combate antes de viajar.');
+        const p = own();
+        if (s.combat && (s.order || []).includes(p.id)) throw Error('Encerre o seu combate antes de viajar.');
         const n = Number(a.location);
-        if (!locations[n]) throw Error('Local invÃ¡lido.');
+        if (!locations[n]) throw Error('Local inválido.');
 
         // ─── Progression gating: auto-advance narrative ───
-        if (!s.questProgress) s.questProgress = {};
         const biomeTarget = locations[n]?.biome || 'forest';
-        if (biomeTarget === 'forest' && !s.questProgress.doran_talked) {
-          s.questProgress.doran_talked = true;
+        if (biomeTarget === 'forest' && (!p.questProgress || !p.questProgress.doran_talked)) {
+          recordProgression(p, { doran_talked: true });
           log('📜 Você segue para a Floresta dos Sussurros com a missão do Ancião Doran.', 'gm');
         }
 
-        s.location = n;
-        s.biome = locations[n].biome;
-        s.act = (n + 1) as 1 | 2 | 3;
+        // Determine which heroes travel: solo hero or party members
+        const partyMembers = p.partyId
+          ? s.characters.filter((c) => c.partyId === p.partyId)
+          : [p];
 
-        // Reposition heroes to safe, walkable entrance coordinates in the new biome
+        for (const member of partyMembers) {
+          member.location = n;
+          member.biome = locations[n].biome;
+          member.act = (n + 1) as 1 | 2 | 3;
+          touchChar(member);
+        }
+
+        if (!isMmo) {
+          s.location = n;
+          s.biome = locations[n].biome;
+          s.act = (n + 1) as 1 | 2 | 3;
+        }
+
+        // Reposition traveling heroes to safe entrance coordinates in the destination biome
         const spawnCoords: Record<string, { x: number; y: number }> = {
           village: { x: 4, y: 5 },
           forest: { x: 3, y: 3 },
@@ -1126,17 +1263,25 @@ export async function POST(req: NextRequest) {
           canyon: { x: 3, y: 6 },
           lair: { x: 3, y: 6 }
         };
-        const pos = spawnCoords[s.biome] || { x: 4, y: 5 };
-        for (let i = 0; i < s.characters.length; i++) {
-          s.characters[i].x = pos.x + (i % 2);
-          s.characters[i].y = pos.y + Math.floor(i / 2);
-          touchChar(s.characters[i]);
+        const pos = spawnCoords[locations[n].biome] || { x: 4, y: 5 };
+        for (let i = 0; i < partyMembers.length; i++) {
+          partyMembers[i].x = pos.x + (i % 2);
+          partyMembers[i].y = pos.y + Math.floor(i / 2);
+          touchChar(partyMembers[i]);
         }
 
-        // Configure enemies appropriate for the destination biome
-        // Enemies are placed but combat does NOT auto-start — exploration first!
-        if (s.biome === 'forest') {
-          s.enemies = [
+        // Remove previous enemies belonging to this party / solo player
+        const partyId = p.partyId;
+        s.enemies = (s.enemies || []).filter((e) => {
+          if (partyId && e.partyId === partyId) return false;
+          if (!partyId && (e.ownerCharId === p.id || (!e.partyId && !e.ownerCharId && !isMmo))) return false;
+          return true;
+        });
+
+        // Configure enemies appropriate for destination biome (scoped to this party / hero)
+        let newBiomeEnemies: Enemy[] = [];
+        if (locations[n].biome === 'forest') {
+          newBiomeEnemies = [
             {
               id: crypto.randomUUID(),
               name: 'Sentinela de Cinzas',
@@ -1162,8 +1307,8 @@ export async function POST(req: NextRequest) {
               y: 2
             }
           ];
-        } else if (s.biome === 'ruins') {
-          s.enemies = [
+        } else if (locations[n].biome === 'ruins') {
+          newBiomeEnemies = [
             {
               id: crypto.randomUUID(),
               name: 'Fanático do Fogo Negro',
@@ -1189,8 +1334,8 @@ export async function POST(req: NextRequest) {
               y: 4
             }
           ];
-        } else if (s.biome === 'dungeon') {
-          s.enemies = [
+        } else if (locations[n].biome === 'dungeon') {
+          newBiomeEnemies = [
             {
               id: crypto.randomUUID(),
               name: 'Guardião Espectral',
@@ -1216,8 +1361,8 @@ export async function POST(req: NextRequest) {
               y: 4
             }
           ];
-        } else if (s.biome === 'canyon') {
-          s.enemies = [
+        } else if (locations[n].biome === 'canyon') {
+          newBiomeEnemies = [
             {
               id: crypto.randomUUID(),
               name: 'Wyrmling Vermelho da Fenda',
@@ -1243,8 +1388,8 @@ export async function POST(req: NextRequest) {
               y: 4
             }
           ];
-        } else if (s.biome === 'lair') {
-          s.enemies = [
+        } else if (locations[n].biome === 'lair') {
+          newBiomeEnemies = [
             {
               id: crypto.randomUUID(),
               name: 'Ignisrax, o Dragão Vermelho',
@@ -1270,26 +1415,34 @@ export async function POST(req: NextRequest) {
               y: 3
             }
           ];
-        } else {
-          // Peaceful village hub — never enemies
-          s.enemies = [];
         }
 
-        // Do NOT auto-start combat â€” player explores first, attacks to engage
-        s.combat = false;
-        s.order = [];
+        for (const e of newBiomeEnemies) {
+          e.biome = locations[n].biome;
+          e.partyId = partyId;
+          e.ownerCharId = partyId ? undefined : p.id;
+          touchChar(e);
+        }
+        s.enemies.push(...newBiomeEnemies);
+
+        // Reset combat for traveling heroes
+        s.order = (s.order || []).filter((id) => !partyMembers.some((m) => m.id === id));
+        if (!s.characters.some((c) => (s.order || []).includes(c.id))) {
+          s.combat = false;
+          s.round = 0;
+          s.turn = 0;
+        }
         s.actionUsed = false;
         s.movementUsed = 0;
-        s.round = 0;
-        s.turn = 0;
 
-        if (s.biome === 'dungeon' || s.location === 2) {
-          s.questProgress.dungeon_entered = true;
+        if (locations[n].biome === 'dungeon' || n === 2) {
+          recordProgression(p, { dungeon_entered: true });
         }
 
-        log(`O grupo viajou para ${locations[n].name}. ${locations[n].text}`, 'gm');
-        if (s.enemies.length > 0) {
-          log(`âš ï¸ Criaturas hostis espreitam os arredores. Prepare-se para o combate ou explore a Ã¡rea.`, 'gm');
+        const partyLabel = partyMembers.length > 1 ? `O grupo de ${p.name}` : p.name;
+        log(`${partyLabel} viajou para ${locations[n].name}. ${locations[n].text}`, 'gm');
+        if (newBiomeEnemies.length > 0) {
+          log(`⚠️ Criaturas hostis espreitam os arredores. Prepare-se para o combate ou explore a área.`, 'gm');
         }
         break;
       }
@@ -1416,9 +1569,9 @@ export async function POST(req: NextRequest) {
       }
       case 'questStep': {
         const stepKey = String(a.step || '');
-        if (!s.questProgress) s.questProgress = {};
+        const p = own();
         if (stepKey) {
-          s.questProgress[stepKey] = true;
+          recordProgression(p, { [stepKey]: true });
         }
         if (a.logText) {
           log(String(a.logText), 'system');
@@ -1472,7 +1625,7 @@ export async function POST(req: NextRequest) {
         const recalculated = calculateEquippedStats(p);
         Object.assign(p, recalculated);
 
-        log(`ðŸŒŸ LEVEL UP! ${p.name} alcanÃ§ou o NÃVEL ${newLevel}! (+${hpGain} PV MÃ¡x). ParabÃ©ns!`, 'gm');
+        log(`ðŸŒŸ LEVEL UP! ${p.name} alcanÃ§ou o NÃ VEL ${newLevel}! (+${hpGain} PV MÃ¡x). ParabÃ©ns!`, 'gm');
         break;
       }
       case 'respawn': {
@@ -1483,13 +1636,43 @@ export async function POST(req: NextRequest) {
         hero.deathFail = 0;
         hero.x = 4;
         hero.y = 6;
-        s.combat = false;
-        s.order = [];
-        s.actionUsed = false;
-        s.location = 0;
-        s.biome = 'village';
-        s.enemies = [];
-        log(`ðŸ•Šï¸ ${hero.name} recuperou a consciÃªncia no santuÃ¡rio da Vila do Rio Verde, curado pelas Ã¡guas e oraÃ§Ãµes.`, 'gm');
+        hero.location = 0;
+        hero.biome = 'village';
+        touchChar(hero);
+
+        const heroPartyId = hero.partyId;
+        // Purge solo enemies belonging to this hero or party if wiped
+        s.enemies = (s.enemies || []).filter((e) => {
+          if (heroPartyId && e.partyId === heroPartyId) return false;
+          if (!heroPartyId && (e.ownerCharId === hero.id || (!e.partyId && !e.ownerCharId && !isMmo))) return false;
+          return true;
+        });
+        // Disengage hero from initiative order
+        s.order = (s.order || []).filter((id) => id !== hero.id);
+        if (s.combatPartyId === hero.id || (heroPartyId && s.combatPartyId === heroPartyId)) {
+          s.combatPartyId = undefined;
+        }
+        // If no more conscious party heroes are in the combat order, end combat fully
+        if (!s.characters.some((c) => c.hp > 0 && (s.order || []).includes(c.id))) {
+          s.combat = false;
+          s.combatPartyId = undefined;
+          s.order = [];
+          s.round = 0;
+          s.turn = 0;
+          s.actionUsed = false;
+          s.movementUsed = 0;
+        }
+        if (!isMmo) {
+          s.combat = false;
+          s.combatPartyId = undefined;
+          s.order = [];
+          s.actionUsed = false;
+          s.movementUsed = 0;
+          s.location = 0;
+          s.biome = 'village';
+          s.enemies = [];
+        }
+        log(`🕊️ ${hero.name} recuperou a consciência no santuário da Vila do Rio Verde, curado pelas águas e orações sagradas.`, 'gm');
         break;
       }
       case 'chat': {
@@ -1553,6 +1736,17 @@ export async function POST(req: NextRequest) {
         const partyId = inviter.partyId || ('party_' + crypto.randomUUID().slice(0, 8));
         inviter.partyId = partyId;
         receiver.partyId = partyId;
+
+        // Merge and synchronize progression for party members
+        const mergedProg = mergePartyProgress(inviter, receiver);
+        inviter.questProgress = { ...mergedProg.questProgress };
+        inviter.worldFlags = { ...mergedProg.worldFlags };
+        inviter.act = mergedProg.act;
+        receiver.questProgress = { ...mergedProg.questProgress };
+        receiver.worldFlags = { ...mergedProg.worldFlags };
+        receiver.act = mergedProg.act;
+        touchChar(inviter);
+        touchChar(receiver);
 
         log(`ðŸ¤ ${receiver.name} aceitou o convite e juntou-se ao grupo de ${inviter.name}!`, 'player');
         break;
@@ -1730,17 +1924,33 @@ export async function POST(req: NextRequest) {
           r = fresh;
           s = freshState;
         }
+      } else if (a.action === 'location' || a.action === 'heartbeat') {
+        const fresh = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(r.id).first<Room>();
+        if (fresh) {
+          await db.prepare('UPDATE rooms SET state=?,version=version+1 WHERE id=?')
+            .bind(JSON.stringify(s), fresh.id)
+            .run();
+          r = fresh;
+        }
       } else {
         const latest = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(r.id).first<Room>();
         return withUserSession(NextResponse.json({
-          error: 'Outra aÃ§Ã£o chegou primeiro. Atualize e tente novamente.',
+          error: 'Outra ação chegou primeiro. Atualize e tente novamente.',
           room: latest ? { ...latest, state: JSON.parse(latest.state) } : undefined
         }, { status: 409 }), user);
       }
     }
 
+    if (!r) {
+      return withUserSession(NextResponse.json({ error: 'Mesa não encontrada' }, { status: 404 }), user);
+    }
+
     const updatedRoom: Room = {
       ...r,
+      id: r.id,
+      owner: r.owner || '',
+      name: r.name || '',
+      code: r.code || '',
       state: JSON.stringify(s),
       version: r.version + 1
     };
@@ -1779,7 +1989,8 @@ export async function POST(req: NextRequest) {
       ok: true,
       room: { ...updatedRoom, state: s },
       attackResult: clientAttackResult,
-      healResult: clientHealResult
+      healResult: clientHealResult,
+      lootResult: clientLootResult
     }), user);
   } catch (e) {
     console.error('[API Error]:', e);
@@ -1791,19 +2002,29 @@ export async function POST(req: NextRequest) {
 }
 
 function advance(s: State) {
-  if (s.enemies.every((x) => x.hp <= 0)) {
+  const orderEnemies = (s.enemies || []).filter((x) => (s.order || []).includes(x.id));
+  const orderChars = (s.characters || []).filter((x) => (s.order || []).includes(x.id));
+  if (orderEnemies.length > 0 && orderEnemies.every((x) => x.hp <= 0)) {
     s.combat = false;
+    s.combatPartyId = undefined;
     s.order = [];
     s.actionUsed = false;
     s.movementUsed = 0;
-    s.logs.push(entry('VitÃ³ria! Todos os inimigos foram derrotados na masmorra.', 'gm'));
+    s.logs.push(entry('Vitória! Todos os inimigos do combate foram derrotados.', 'gm'));
     return;
   }
-  if (s.characters.every((x) => x.hp <= 0)) {
+  if (orderChars.length > 0 && orderChars.every((x) => x.hp <= 0)) {
     s.combat = false;
+    s.combatPartyId = undefined;
+    s.order = [];
     s.actionUsed = false;
     s.movementUsed = 0;
-    s.logs.push(entry('O grupo caiu inconsciente. A aventura precisa de socorro ou descanso!', 'gm'));
+    s.logs.push(entry('Os combatentes caíram inconscientes.', 'gm'));
+    return;
+  }
+  if (!s.order || s.order.length === 0) {
+    s.combat = false;
+    s.combatPartyId = undefined;
     return;
   }
   let safety = 0;
@@ -1812,16 +2033,17 @@ function advance(s: State) {
     if (s.turn === 0) s.round++;
     safety++;
     if (safety > s.order.length + 2) {
-      // All entities are dead or missing â€” end combat
+      // All entities are dead or missing — end combat
       s.combat = false;
+      s.combatPartyId = undefined;
       s.order = [];
       s.actionUsed = false;
       s.movementUsed = 0;
-      s.logs.push(entry('O combate terminou â€” nenhuma criatura ativa restante.', 'gm'));
+      s.logs.push(entry('O combate terminou — nenhuma criatura ativa restante.', 'gm'));
       return;
     }
     const entity = [...s.characters, ...s.enemies].find((x) => x.id === s.order[s.turn]);
-    if (!entity) continue; // Entity no longer exists â€” skip
+    if (!entity) continue; // Entity no longer exists — skip
     if (entity.hp > 0) break; // Found alive entity
   } while (true);
 
@@ -1859,16 +2081,17 @@ function executeEnemyAI(s: State) {
     if (!curId) break;
     const enemy = s.enemies.find((e) => e.id === curId && e.hp > 0);
     if (!enemy) break;
-    const activeHeroes = s.characters.filter((c) => c.hp > 0);
+    const enemyBiome = enemy.biome || 'village';
+    const activeHeroes = s.characters.filter((c) => c.hp > 0 && (c.biome || 'village') === enemyBiome && s.order.includes(c.id));
     if (activeHeroes.length === 0) {
       s.combat = false;
+      s.combatPartyId = undefined;
       s.actionUsed = false;
       s.movementUsed = 0;
       break;
     }
 
-    // Smart target selection: distribute attacks among different heroes
-    // Prefer heroes NOT already attacked this round, unless only 1 hero remains
+    // Smart target selection: distribute attacks among heroes in the same combat and biome
     const notYetAttacked = activeHeroes.filter((h) => !attackedTargets.has(h.id));
     const candidates = notYetAttacked.length > 0 ? notYetAttacked : activeHeroes;
     const target = candidates.sort((a, b) => {

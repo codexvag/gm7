@@ -17,7 +17,7 @@ import {
   ChevronDown,
   ChevronUp
 } from 'lucide-react';
-import type { State } from '@/lib/game-engine';
+import type { State, Character } from '@/lib/game-engine';
 
 export interface CampaignStep {
   id: number;
@@ -95,6 +95,7 @@ export const CAMPAIGN_STEPS: CampaignStep[] = [
 
 interface CampaignTrackerProps {
   state: State | null;
+  activeHero?: Character | null;
   onTalkNpc: (npcId: string) => void;
   onTravel: (biome: 'village' | 'forest' | 'dungeon') => void;
   onStartCombat: () => void;
@@ -103,6 +104,7 @@ interface CampaignTrackerProps {
 
 export function CampaignTracker({
   state,
+  activeHero,
   onTalkNpc,
   onTravel,
   onStartCombat,
@@ -111,18 +113,19 @@ export function CampaignTracker({
   const [isMinimized, setIsMinimized] = useState(false);
   const [showBriefingModal, setShowBriefingModal] = useState(false);
 
-  // Determine current campaign step dynamically based on game state
+  // Determine current campaign step dynamically based on individual hero or party progression
   const currentStepIndex = React.useMemo(() => {
     if (!state) return 0;
-    const qp = state.questProgress || {};
-    const biome = state.biome || 'village';
-    const hasEnemiesAlive = state.enemies && state.enemies.some((e) => e.hp > 0);
+    const qp = activeHero?.questProgress || state.questProgress || {};
+    const biome = activeHero?.biome || state.biome || 'village';
+    const loc = activeHero?.location ?? state.location ?? 0;
+    const hasEnemiesAlive = state.enemies && state.enemies.some((e) => e.hp > 0 && (!e.ownerCharId || e.ownerCharId === activeHero?.id));
 
     // 1. Defeated Malakor -> Step 6 (index 5)
     if (qp.malakor_defeated) return 5;
 
     // 2. In dungeon or entered dungeon -> Step 6 (index 5: Confrontar Malakor)
-    if (qp.dungeon_entered || biome === 'dungeon' || state.location === 2) {
+    if (qp.dungeon_entered || biome === 'dungeon' || loc === 2) {
       return 5;
     }
 
@@ -132,7 +135,7 @@ export function CampaignTracker({
     }
 
     // 4. In forest: if enemies are alive -> Step 4 (index 3: Neutralizar Patrulha)
-    if (biome === 'forest' || state.location === 1) {
+    if (biome === 'forest' || loc === 1) {
       if (hasEnemiesAlive) return 3;
       return 4;
     }
@@ -150,7 +153,7 @@ export function CampaignTracker({
 
     // Default: Step 1 (index 0: O Chamado do Ancião Doran)
     return 0;
-  }, [state]);
+  }, [state, activeHero]);
 
   const currentStep = CAMPAIGN_STEPS[currentStepIndex] || CAMPAIGN_STEPS[0];
   const progressPercent = Math.round(((currentStepIndex + 1) / CAMPAIGN_STEPS.length) * 100);
