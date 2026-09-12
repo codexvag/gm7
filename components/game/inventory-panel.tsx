@@ -22,6 +22,7 @@ import {
   ItemDefinition,
   calculateEquippedStats
 } from '@/lib/game-engine';
+import { parseInventoryStacks, normalizeInventoryName } from '@/lib/inventory-utils';
 
 interface InventoryPanelProps {
   hero: Character;
@@ -42,6 +43,32 @@ export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: Inven
       ? parsed
       : ['Espada Longa', 'Cota de Malha', 'Escudo de Carvalho e Ferro', 'Poção de Cura (2)', 'Tocha Alquímica'];
   });
+
+  const inventoryStacks =
+    parseInventoryStacks(
+      inventoryList.join('\n')
+    );
+
+  const getQuantity = (item: ItemDefinition) => {
+    const target =
+      normalizeInventoryName(item.name);
+
+    return inventoryStacks
+      .filter(
+        (stack) =>
+          normalizeInventoryName(stack.name) === target
+      )
+      .reduce(
+        (total, stack) =>
+          total + stack.quantity,
+        0
+      );
+  };
+
+  const ownedCatalogItems =
+    Object.values(ITEMS_CATALOG).filter(
+      (item) => getQuantity(item) > 0
+    );
 
   const equipment = hero.equipment || {};
 
@@ -217,14 +244,15 @@ export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: Inven
           <div className="md:col-span-7 bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <span className="text-xs uppercase tracking-widest text-zinc-400 font-bold">
-                Mochila de Aventura ({Object.keys(ITEMS_CATALOG).length} itens catalogados)
+                Mochila de Aventura ({inventoryStacks.reduce((total, stack) => total + stack.quantity, 0)} unidades)
               </span>
               <span className="text-[11px] text-amber-400">Toque em um item para equipar ou usar</span>
             </div>
 
             {/* Grid of Available Items */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 overflow-y-auto max-h-[330px] p-1 scrollbar-thin">
-              {Object.values(ITEMS_CATALOG).map((item) => {
+              {ownedCatalogItems.map((item) => {
+                const quantity = getQuantity(item);
                 const isEquipped = Object.values(equipment).includes(item.id);
 
                 const rarityBorders: Record<string, string> = {
@@ -245,6 +273,10 @@ export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: Inven
                       selectedItem?.id === item.id ? 'ring-2 ring-amber-400' : ''
                     }`}
                   >
+                    <span className="absolute top-1 left-1 bg-zinc-800/95 border border-zinc-600 text-zinc-100 text-[9px] font-black px-1.5 rounded">
+                      x{quantity}
+                    </span>
+
                     {isEquipped && (
                       <span className="absolute top-1 right-1 bg-amber-500 text-black text-[9px] font-black px-1 rounded">
                         EQUIPADO

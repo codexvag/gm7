@@ -51,3 +51,6 @@ dist/
 
 # Local SQLite database
 /data/
+
+# Local backup files
+*.bak

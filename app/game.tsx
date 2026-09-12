@@ -210,11 +210,7 @@ export default function Game() {
   const [activeNpcDialog, setActiveNpcDialog] = useState<NpcDialogData | null>(null);
   const [showShop, setShowShop] = useState(false);
   const [shopMerchant, setShopMerchant] = useState<ShopMerchant | null>(null);
-  const [aiChoices, setAiChoices] = useState<string[]>([
-    'Examinar os degraus e a névoa da abadia',
-    'Tocar no sino de bronze rúnico',
-    'Conversar com Mira, a eremita'
-  ]);
+  const [aiChoices, setAiChoices] = useState<string[]>([]);
   const [isJournalOpen, setIsJournalOpen] = useState(false);
 
   // New CRPG Campaign, Procedural Dungeon & Mobile States
@@ -1049,9 +1045,7 @@ export default function Game() {
       const d = (await r.json()) as ApiData;
       if (!r.ok) throw Error(d.error);
       setSearchHtml(d.searchHtml || '');
-      if (d.choices && d.choices.length > 0) {
-        setAiChoices(d.choices);
-      }
+      setAiChoices([]);
       if (!customText) setMessage('');
       await load(curRoom?.id);
     } catch (e) {
@@ -1069,6 +1063,23 @@ export default function Game() {
   const active = (state?.characters || []).find((c) => c.id === selected && (isMmoRoom ? c.owner === user : true))
     || myHeroes[0]
     || (state?.characters || [])[0];
+  const canReturnToPartyBattle = Boolean(
+    isMmoRoom &&
+    active &&
+    active.hp > 0 &&
+    active.partyId &&
+    state?.combat &&
+    state.combatPartyId === active.partyId &&
+    !(state.order || []).includes(active.id) &&
+    (state.characters || []).some(
+      (char) =>
+        char.id !== active.id &&
+        char.partyId === active.partyId &&
+        char.hp > 0 &&
+        (state.order || []).includes(char.id)
+    )
+  );
+
   const activeLocIdx = active?.location ?? state?.location ?? 0;
   const location = (locations && locations[activeLocIdx]) || locations[0];
   const canEdit = active && (owner || active.owner === user || !isMmoRoom);
@@ -1848,6 +1859,32 @@ export default function Game() {
               <span>{error}</span>
               <button onClick={() => { setError(''); void load(room?.id); }}>
                 <RefreshCw size={15} />
+              </button>
+            </div>
+          )}
+
+          {canReturnToPartyBattle && active && (
+            <div className="mx-2 sm:mx-4 mb-2 rounded-xl border border-amber-500/60 bg-amber-950/80 shadow-lg px-3 py-2 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-black text-amber-100">
+                  ?? Seu grupo ainda est? em combate
+                </div>
+                <div className="text-xs text-amber-200/80">
+                  Voc? renasceu na vila, mas seus aliados continuam lutando.
+                </div>
+              </div>
+
+              <button
+                disabled={busy}
+                onClick={() =>
+                  void action({
+                    action: 'joinCombat',
+                    character: active.id
+                  })
+                }
+                className="shrink-0 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 px-3 py-2 text-xs font-black uppercase tracking-wide text-black transition-all active:scale-95"
+              >
+                Retornar ? batalha
               </button>
             </div>
           )}

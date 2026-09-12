@@ -15,6 +15,7 @@ import {
   type Enemy
 } from './game-engine';
 import { MICRO_ADVENTURES, startMicroAdventure } from './micro-adventures';
+import { addInventoryItem } from './inventory-utils';
 import { adjustShopStockWithinBounds, adjustFaunaPresenceWithinBounds } from './sandbox-director';
 
 export interface GmToolDefinition {
@@ -41,162 +42,169 @@ export const GM_CONTROLLED_TOOLS: GmToolDefinition[] = [
   {
     type: 'function',
     function: {
-      name: 'create_encounter',
+      name: 'request_creature_spawn',
       description:
-        'Cria um encontro de combate posicionando um ou mais inimigos no mapa tático e ajustando a iniciativa.',
+        'Sugere ? engine que uma criatura ou pequeno grupo apare?a por uma raz?o narrativa. A engine decide estat?sticas, balanceamento, posicionamento e se haver? combate.',
       parameters: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: 'Nome do monstro ou inimigo (ex: Sentinela de Cinzas, Cultista Sombrio)' },
-          hp: { type: 'number', description: 'Pontos de vida máximos do inimigo (ex: 9 a 45)' },
-          ac: { type: 'number', description: 'Classe de Armadura / CA do inimigo (ex: 10 a 16)' },
-          attack: { type: 'number', description: 'Bônus de ataque d20 do inimigo (ex: +2 a +5)' },
-          damage: { type: 'string', description: 'Fórmula de dano da criatura (ex: 1d6+1, 1d8+2)' },
-          x: { type: 'number', description: 'Coordenada X na grade tática (0 a 15)' },
-          y: { type: 'number', description: 'Coordenada Y na grade tática (0 a 15)' },
-          startCombat: { type: 'boolean', description: 'Se verdadeiro, inicia combate imediatamente com ordem de iniciativa 5e' }
-        },
-        required: ['name', 'hp', 'ac', 'attack', 'damage']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'create_npc',
-      description:
-        'Cria um novo Personagem do Mestre (NPC) interativo no cenário, com diálogo e papel definido.',
-      parameters: {
-        type: 'object',
-        properties: {
-          name: { type: 'string', description: 'Nome completo do NPC' },
-          role: { type: 'string', description: 'Papel ou ocupação (ex: Guarda da Vila, Boticária, Ferreiro)' },
-          description: { type: 'string', description: 'Aparência e postura física do NPC' },
-          dialogue: {
-            type: 'array',
-            items: { type: 'string' },
-            description: 'Falas ou opções de conversa iniciais'
-          },
-          x: { type: 'number', description: 'Coordenada X opcional no mapa' },
-          y: { type: 'number', description: 'Coordenada Y opcional no mapa' }
-        },
-        required: ['name', 'role', 'description']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'grant_loot',
-      description:
-        'Concede recompensas aos heróis (ouro, pontos de experiência XP ou itens como poções e armas).',
-      parameters: {
-        type: 'object',
-        properties: {
-          targetHeroId: { type: 'string', description: 'ID do herói beneficiado ou "all" para todo o grupo' },
-          itemId: { type: 'string', description: 'Identificador do item (ex: pocao-cura, espada-longa, adaga)' },
-          itemName: { type: 'string', description: 'Nome legível do item' },
-          gold: { type: 'number', description: 'Quantidade de moedas de ouro concedidas' },
-          xp: { type: 'number', description: 'Quantidade de pontos de experiência (XP) concedidos' },
-          reason: { type: 'string', description: 'Motivo da recompensa (ex: vitória em combate, baú encontrado)' }
-        },
-        required: []
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'set_combat_state',
-      description:
-        'Inicia ou encerra o modo de combate formal sob a ordem de iniciativa D&D 5e.',
-      parameters: {
-        type: 'object',
-        properties: {
-          action: {
+          creatureName: {
             type: 'string',
-            enum: ['start', 'end'],
-            description: '"start" para rolar iniciativa e iniciar combate, ou "end" para encerrar a batalha'
+            description: 'Nome ou conceito narrativo da criatura.'
           },
-          reason: { type: 'string', description: 'Motivo narrativo da mudança de estado de combate' }
-        },
-        required: ['action']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'update_quest',
-      description:
-        'Atualiza o progresso de um objetivo ou marco da campanha no diário de missões.',
-      parameters: {
-        type: 'object',
-        properties: {
-          questKey: { type: 'string', description: 'Identificador único da etapa da missão (ex: act1-sentinel, investigate_abbey)' },
-          title: { type: 'string', description: 'Título claro do objetivo' },
-          completed: { type: 'boolean', description: 'Se o objetivo foi concluído com sucesso' },
-          narrativeNote: { type: 'string', description: 'Nota de desdobramento narrativo para o diário de bordo' }
-        },
-        required: ['questKey', 'title', 'completed']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'trigger_world_event',
-      description:
-        'Desencadeia um evento ambiental ou narrativo de mundo (como rumores sobre o dragão, tremores na fenda, mudança climática ou início de microaventura pré-definida).',
-      parameters: {
-        type: 'object',
-        properties: {
-          eventType: {
+          threat: {
             type: 'string',
-            enum: ['dragon_rumor', 'earthquake', 'cinders', 'start_microadventure'],
-            description: 'Tipo do evento de mundo a disparar'
+            enum: ['baixa', 'moderada', 'alta', 'chefe'],
+            description: 'Intensidade narrativa desejada. A engine poder? reduzir conforme o n?vel do grupo.'
           },
-          detail: { type: 'string', description: 'Descrição vívida do evento para os jogadores' },
-          adventureId: { type: 'string', description: 'ID opcional da microaventura a iniciar' }
+          count: {
+            type: 'number',
+            description: 'Quantidade sugerida. A engine limita automaticamente.'
+          },
+          reason: {
+            type: 'string',
+            description: 'Por que esta presen?a faz sentido neste local e momento.'
+          }
         },
-        required: ['eventType', 'detail']
+        required: ['creatureName', 'threat', 'reason']
       }
     }
   },
+
+  {
+    type: 'function',
+    function: {
+      name: 'request_temporary_npc',
+      description:
+        'Sugere um NPC contextual ao mundo. A engine decide se pode cri?-lo.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          role: { type: 'string' },
+          description: { type: 'string' },
+          reason: { type: 'string' }
+        },
+        required: ['name', 'role', 'description', 'reason']
+      }
+    }
+  },
+
+  {
+    type: 'function',
+    function: {
+      name: 'request_loot',
+      description:
+        'Sugere uma recompensa narrativa. A IA n?o escolhe ouro exato, XP ou estat?sticas do item; a engine decide.',
+      parameters: {
+        type: 'object',
+        properties: {
+          rewardClass: {
+            type: 'string',
+            enum: ['pequena', 'normal', 'importante']
+          },
+          rewardKind: {
+            type: 'string',
+            enum: ['ouro', 'item', 'misto']
+          },
+          scope: {
+            type: 'string',
+            enum: ['jogador', 'grupo']
+          },
+          reason: {
+            type: 'string'
+          }
+        },
+        required: ['rewardClass', 'rewardKind', 'reason']
+      }
+    }
+  },
+
+  {
+    type: 'function',
+    function: {
+      name: 'request_environmental_event',
+      description:
+        'Sugere um acontecimento ambiental, rumor, press?gio ou mudan?a regional sem mexer nas regras.',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: {
+            type: 'string',
+            description: 'Descri??o curta do acontecimento.'
+          },
+          reason: {
+            type: 'string',
+            description: 'Causa ou conex?o com o estado atual do mundo.'
+          }
+        },
+        required: ['text', 'reason']
+      }
+    }
+  },
+
+  {
+    type: 'function',
+    function: {
+      name: 'request_microadventure',
+      description:
+        'Sugere que a engine ofere?a uma microaventura dispon?vel e coerente com o progresso atual. A engine escolhe qual aventura pode realmente come?ar.',
+      parameters: {
+        type: 'object',
+        properties: {
+          theme: {
+            type: 'string',
+            description: 'Tema narrativo desejado, sem informar ID interno.'
+          },
+          reason: {
+            type: 'string'
+          }
+        },
+        required: ['reason']
+      }
+    }
+  },
+
   {
     type: 'function',
     function: {
       name: 'influence_economy',
       description:
-        'Sugere uma tendência ou contexto narrativo na economia da vila (ex: escassez de suprimentos, atraso de caravana). Os preços e estoques são ajustados dentro de limites rígidos autorizados (0.85x a 1.25x).',
+        'Sugere uma tend?ncia econ?mica. A engine aplica somente valores seguros.',
       parameters: {
         type: 'object',
         properties: {
-          reason: { type: 'string', description: 'Motivo narrativo da mudança econômica (ex: Caravana atrasada por ataques de goblins)' },
-          multiplier: { type: 'number', description: 'Multiplicador sugerido de preços (limitado entre 0.85 e 1.25)' },
-          item: { type: 'string', description: 'Item ou categoria específica afetada (opcional)' }
+          trend: {
+            type: 'string',
+            enum: ['estavel', 'escassez', 'abundancia']
+          },
+          reason: {
+            type: 'string'
+          }
         },
-        required: ['reason']
+        required: ['trend', 'reason']
       }
     }
   },
+
   {
     type: 'function',
     function: {
       name: 'adjust_ecosystem',
       description:
-        'Sugere dinâmicas sutis de ecossistema e fauna regional (ex: presença de cervos, rastros de lobos ou corvos vigiando) dentro de um teto estrito de segurança.',
+        'Sugere uma manifesta??o ecol?gica segura para dar vida ? regi?o.',
       parameters: {
         type: 'object',
         properties: {
-          reason: { type: 'string', description: 'Motivo narrativo ou observação ambiental' },
-          critterType: {
+          signal: {
             type: 'string',
-            enum: ['lobos_rastros', 'cervos', 'corvos'],
-            description: 'Tipo de manifestação ecológica segura'
+            enum: ['rastros_lobos', 'cervos', 'corvos']
+          },
+          reason: {
+            type: 'string'
           }
         },
-        required: ['reason']
+        required: ['signal', 'reason']
       }
     }
   }
@@ -337,10 +345,11 @@ export function executeServerAuthoritativeGmTool(
           hero.xp = (hero.xp || 0) + xp;
         }
         if (rawItemId) {
-          // Append item safely into character inventory string
-          const curInv = hero.inventory ? hero.inventory.trim() : '';
-          const addition = rawItemId;
-          hero.inventory = curInv ? `${curInv}, ${addition}` : addition;
+          hero.inventory = addInventoryItem(
+            hero.inventory || '',
+            itemName,
+            1
+          );
         }
       }
 

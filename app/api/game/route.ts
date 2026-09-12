@@ -37,6 +37,8 @@ import {
   type Enemy
 } from '@/lib/game-engine';
 import { generateMobLoot, registerProceduralItem, type ProceduralItem } from '@/lib/procedural-items';
+import { getCreatureProfile, prepareEnemyForCombat } from '@/lib/creature-profiles';
+import { addInventoryItem, removeInventoryItem, getInventoryQuantity, stripInventoryQuantity } from '@/lib/inventory-utils';
 import { readCompactWorldContext, evaluateDirectorPacing, executeDirectorIntent } from '@/lib/sandbox-director';
 import { isGridTileWalkable, MAP_COLLISION_PROFILES, type CollisionPolygon } from '@/lib/collision-system';
 import fs from 'node:fs';
@@ -571,6 +573,13 @@ export async function POST(req: NextRequest) {
           touchChar(char);
         }
         for (const enemy of myEnemies) {
+          prepareEnemyForCombat(
+            enemy,
+            partyMembers,
+            heroBiome,
+            partyId,
+            p.id
+          );
           enemy.initiative = d20().raw + 1;
           touchChar(enemy);
         }
@@ -613,14 +622,65 @@ export async function POST(req: NextRequest) {
           touchChar(char);
         }
 
-        const livingEnemies = (s.enemies || []).filter((e) => {
-          if (e.hp <= 0) return false;
-          if (e.biome && e.biome !== heroBiome) return false;
-          if (partyId) return !e.partyId || e.partyId === partyId;
-          return !e.ownerCharId || e.ownerCharId === p.id;
+        // Claim legacy/world enemies for the party that really engages them.
+        // Older saves may contain Malakor or other enemies without party scope.
+        for (const enemy of (s.enemies || [])) {
+          if (enemy.hp <= 0) continue;
+
+          const sameBiome =
+            !enemy.biome ||
+            enemy.biome === heroBiome;
+
+          const isLegacyMalakor =
+            enemy.name.includes('Malakor');
+
+          if (
+            !enemy.partyId &&
+            !enemy.ownerCharId &&
+            (sameBiome || isLegacyMalakor)
+          ) {
+            prepareEnemyForCombat(
+              enemy,
+              partyMembers,
+              heroBiome,
+              partyId,
+              p.id
+            );
+          }
+        }
+
+        const livingEnemies = (s.enemies || []).filter((enemy) => {
+          if (enemy.hp <= 0) return false;
+
+          if (
+            enemy.biome &&
+            enemy.biome !== heroBiome
+          ) {
+            return false;
+          }
+
+          if (partyId) {
+            return enemy.partyId === partyId;
+          }
+
+          return enemy.ownerCharId === p.id;
         });
 
+        if (livingEnemies.length === 0) {
+          throw Error(
+            'Nao ha criaturas hostis validas para este grupo nesta area.'
+          );
+        }
+
         for (const enemy of livingEnemies) {
+          prepareEnemyForCombat(
+            enemy,
+            partyMembers,
+            heroBiome,
+            partyId,
+            p.id
+          );
+
           enemy.initiative = d20().raw + 1;
           touchChar(enemy);
         }
@@ -647,26 +707,120 @@ export async function POST(req: NextRequest) {
       }
       case 'joinCombat': {
         const p = own();
-        if (!s.combat) throw Error('Não há batalha tática ativa no momento.');
-        if (s.order.includes(p.id)) throw Error(`${p.name} já está participando desta batalha.`);
 
-        p.initiative = d20().raw + mod(p.stats[1]) - 2 * (p.exhaustion || 0);
+        if (!s.combat) {
+          throw Error('Nao ha batalha tatica ativa no momento.');
+        }
+
+        if (p.hp <= 0) {
+          throw Error('Seu personagem precisa estar consciente para retornar.');
+        }
+
+        const combatKey = p.partyId || p.id;
+
+        if (
+          s.combatPartyId &&
+          s.combatPartyId !== combatKey
+        ) {
+          throw Error('Esta batalha pertence a outro grupo.');
+        }
+
+        if ((s.order || []).includes(p.id)) {
+          throw Error(p.name + ' ja esta participando desta batalha.');
+        }
+
+        const alliesInBattle = (s.characters || []).filter((char) => {
+          if (char.id === p.id) return false;
+          if (char.hp <= 0) return false;
+          if (!(s.order || []).includes(char.id)) return false;
+
+          if (p.partyId) {
+            return char.partyId === p.partyId;
+          }
+
+          return false;
+        });
+
+        if (p.partyId && alliesInBattle.length === 0) {
+          throw Error(
+            'Nenhum aliado consciente do seu grupo permanece nesta batalha.'
+          );
+        }
+
+        const enemiesInBattle = (s.enemies || []).filter((enemy) => {
+          if (enemy.hp <= 0) return false;
+          if (!(s.order || []).includes(enemy.id)) return false;
+
+          if (p.partyId) {
+            return enemy.partyId === p.partyId;
+          }
+
+          return enemy.ownerCharId === p.id;
+        });
+
+        if (enemiesInBattle.length === 0) {
+          throw Error(
+            'A batalha ja terminou. Nao ha inimigos ativos para retornar.'
+          );
+        }
+
+        // Reaparece ao lado de um aliado sobrevivente.
+        const anchor = alliesInBattle[0];
+
+        if (anchor) {
+          p.location = anchor.location ?? p.location ?? s.location;
+          p.biome = anchor.biome ?? p.biome ?? s.biome;
+
+          const candidates = [
+            { x: anchor.x - 1, y: anchor.y },
+            { x: anchor.x + 1, y: anchor.y },
+            { x: anchor.x, y: anchor.y - 1 },
+            { x: anchor.x, y: anchor.y + 1 }
+          ];
+
+          const occupied = new Set(
+            [
+              ...(s.characters || []),
+              ...(s.enemies || [])
+            ]
+              .filter((entity) => entity.id !== p.id && entity.hp > 0)
+              .map((entity) => entity.x + ':' + entity.y)
+          );
+
+          const destination =
+            candidates.find(
+              (pos) =>
+                pos.x >= 0 &&
+                pos.x <= 15 &&
+                pos.y >= 0 &&
+                pos.y <= 15 &&
+                !occupied.has(pos.x + ':' + pos.y)
+            ) || {
+              x: anchor.x,
+              y: anchor.y
+            };
+
+          p.x = destination.x;
+          p.y = destination.y;
+        }
+
+        p.initiative =
+          d20().raw +
+          mod(p.stats[1]) -
+          2 * (p.exhaustion || 0);
+
         touchChar(p);
 
-        let insertIdx = s.order.length;
-        for (let i = 0; i < s.order.length; i++) {
-          const actor = [...s.characters, ...s.enemies].find((x) => x.id === s.order[i]);
-          const init = actor ? (actor.initiative || 0) : 0;
-          if (p.initiative > init) {
-            insertIdx = i;
-            break;
-          }
-        }
-        s.order.splice(insertIdx, 0, p.id);
-        if (insertIdx <= s.turn) {
-          s.turn++;
-        }
-        log(`🛡️ ${p.name} entrou na batalha com o grupo! Iniciativa rolada: ${p.initiative}`, 'roll');
+        // Reforcos entram no final do ciclo atual.
+        s.order.push(p.id);
+
+        log(
+          '??? ' +
+            p.name +
+            ' retornou ao campo de batalha para ajudar o grupo!',
+          'roll'
+        );
+
         break;
       }
       case 'attack': {
@@ -686,11 +840,72 @@ export async function POST(req: NextRequest) {
             char.initiative = d20().raw + mod(char.stats[1]) + 3 - 2 * (char.exhaustion || 0);
             touchChar(char);
           }
-          for (const enemy of s.enemies.filter((e) => e.hp > 0)) {
+          const combatBiome =
+            (p.biome || s.biome || 'village') as string;
+
+          // Scope legacy enemies only to the party/hero that engages them.
+          for (const enemy of (s.enemies || [])) {
+            if (enemy.hp <= 0) continue;
+
+            const sameBiome =
+              !enemy.biome ||
+              enemy.biome === combatBiome;
+
+            const isLegacyMalakor =
+              enemy.name.includes('Malakor');
+
+            if (
+              !enemy.partyId &&
+              !enemy.ownerCharId &&
+              (sameBiome || isLegacyMalakor)
+            ) {
+              prepareEnemyForCombat(
+                enemy,
+                partyMembers,
+                combatBiome,
+                p.partyId,
+                p.id
+              );
+            }
+          }
+
+          const combatEnemies = (s.enemies || []).filter((enemy) => {
+            if (enemy.hp <= 0) return false;
+
+            if (
+              enemy.biome &&
+              enemy.biome !== combatBiome
+            ) {
+              return false;
+            }
+
+            if (p.partyId) {
+              return enemy.partyId === p.partyId;
+            }
+
+            return enemy.ownerCharId === p.id;
+          });
+
+          if (combatEnemies.length === 0) {
+            throw Error(
+              'Nao ha criaturas hostis validas para este combate.'
+            );
+          }
+
+          for (const enemy of combatEnemies) {
+            prepareEnemyForCombat(
+              enemy,
+              partyMembers,
+              combatBiome,
+              p.partyId,
+              p.id
+            );
+
             enemy.initiative = d20().raw + 1;
             touchChar(enemy);
           }
-          s.order = [...partyMembers, ...s.enemies.filter((e) => e.hp > 0)]
+
+          s.order = [...partyMembers, ...combatEnemies]
             .sort((a, b) => (b.initiative || 0) - (a.initiative || 0) || a.id.localeCompare(b.id))
             .map((x) => x.id);
           s.turn = s.order.indexOf(p.id);
@@ -778,7 +993,7 @@ export async function POST(req: NextRequest) {
 
         if (target.hp <= 0) {
           log(`💀 ${target.name} foi derrotado!`, 'gm');
-          const xpReward = target.name.includes('Malakor') ? 500 : target.name.includes('Guardião') ? 250 : 150;
+          const xpReward = getCreatureProfile(target.name).xpReward;
           if (isMmo) {
             const recipients = p.partyId
               ? s.characters.filter((char) => char.partyId === p.partyId)
@@ -863,11 +1078,72 @@ export async function POST(req: NextRequest) {
             char.initiative = d20().raw + mod(char.stats[1]) + 3 - 2 * (char.exhaustion || 0);
             touchChar(char);
           }
-          for (const enemy of s.enemies.filter((e) => e.hp > 0)) {
+          const combatBiome =
+            (p.biome || s.biome || 'village') as string;
+
+          // Scope legacy enemies only to the party/hero that engages them.
+          for (const enemy of (s.enemies || [])) {
+            if (enemy.hp <= 0) continue;
+
+            const sameBiome =
+              !enemy.biome ||
+              enemy.biome === combatBiome;
+
+            const isLegacyMalakor =
+              enemy.name.includes('Malakor');
+
+            if (
+              !enemy.partyId &&
+              !enemy.ownerCharId &&
+              (sameBiome || isLegacyMalakor)
+            ) {
+              prepareEnemyForCombat(
+                enemy,
+                partyMembers,
+                combatBiome,
+                p.partyId,
+                p.id
+              );
+            }
+          }
+
+          const combatEnemies = (s.enemies || []).filter((enemy) => {
+            if (enemy.hp <= 0) return false;
+
+            if (
+              enemy.biome &&
+              enemy.biome !== combatBiome
+            ) {
+              return false;
+            }
+
+            if (p.partyId) {
+              return enemy.partyId === p.partyId;
+            }
+
+            return enemy.ownerCharId === p.id;
+          });
+
+          if (combatEnemies.length === 0) {
+            throw Error(
+              'Nao ha criaturas hostis validas para este combate.'
+            );
+          }
+
+          for (const enemy of combatEnemies) {
+            prepareEnemyForCombat(
+              enemy,
+              partyMembers,
+              combatBiome,
+              p.partyId,
+              p.id
+            );
+
             enemy.initiative = d20().raw + 1;
             touchChar(enemy);
           }
-          s.order = [...partyMembers, ...s.enemies.filter((e) => e.hp > 0)]
+
+          s.order = [...partyMembers, ...combatEnemies]
             .sort((a, b) => (b.initiative || 0) - (a.initiative || 0) || a.id.localeCompare(b.id))
             .map((x) => x.id);
           s.turn = s.order.indexOf(p.id);
@@ -960,7 +1236,7 @@ export async function POST(req: NextRequest) {
 
           if (target.hp <= 0) {
             log(`💀 ${target.name} foi derrotado pela magia!`, 'gm');
-            const xpReward = target.name.includes('Malakor') ? 500 : target.name.includes('Guardião') ? 250 : 150;
+            const xpReward = getCreatureProfile(target.name).xpReward;
             if (isMmo) {
               const recipients = p.partyId
                 ? s.characters.filter((char) => char.partyId === p.partyId)
@@ -1051,43 +1327,147 @@ export async function POST(req: NextRequest) {
       }
       case 'useItem': {
         const p = own();
-        const itemId = String(a.itemId || 'pocao-cura');
-        const targetId = a.targetId || p.id;
-        const targetChar = s.characters.find((x) => x.id === targetId);
-        if (!targetChar) throw Error('Alvo invÃ¡lido para o item.');
-        if (targetChar.id !== p.id && getGridDistance(p, targetChar) > 1) {
-          throw Error(`Alvo muito distante para aplicar o item. Alcance de toque: 1 quadrado (1.5m).`);
+
+        const itemId = String(
+          a.itemId || 'pocao-cura'
+        );
+
+        const itemDef = ITEMS_CATALOG[itemId];
+
+        if (!itemDef) {
+          throw Error('Item nao encontrado.');
         }
 
-        const isMyCombat = !isMmo || !s.combatPartyId || s.combatPartyId === (p.partyId || p.id);
+        if (!itemDef.healFormula) {
+          throw Error(
+            'Este item nao e um consumivel de cura utilizavel.'
+          );
+        }
+
+        const ownedQuantity =
+          getInventoryQuantity(
+            p.inventory || '',
+            itemDef.name
+          );
+
+        if (ownedQuantity <= 0) {
+          throw Error(
+            'Voce nao possui ' +
+              itemDef.name +
+              ' no inventario.'
+          );
+        }
+
+        const targetId = a.targetId || p.id;
+
+        const targetChar =
+          s.characters.find(
+            (char) => char.id === targetId
+          );
+
+        if (!targetChar) {
+          throw Error('Alvo invalido para o item.');
+        }
+
+        if (
+          targetChar.id !== p.id &&
+          getGridDistance(p, targetChar) > 1
+        ) {
+          throw Error(
+            'Alvo muito distante para aplicar o item.'
+          );
+        }
+
+        if (targetChar.hp >= targetChar.maxHp) {
+          throw Error(
+            targetChar.name +
+              ' ja esta com os Pontos de Vida no maximo.'
+          );
+        }
+
+        const isMyCombat =
+          !isMmo ||
+          !s.combatPartyId ||
+          s.combatPartyId === (p.partyId || p.id);
+
         if (s.combat && isMyCombat) {
-          const curTurnId = s.order[s.turn];
-          if (curTurnId && curTurnId !== p.id) {
-            throw Error(`Não é o turno de ${p.name}. Aguarde sua vez na ordem de iniciativa.`);
+          const curTurnId =
+            s.order[s.turn];
+
+          if (
+            curTurnId &&
+            curTurnId !== p.id
+          ) {
+            throw Error(
+              'Nao e o turno de ' +
+                p.name +
+                '. Aguarde sua vez.'
+            );
           }
+
           if (s.actionUsed) {
-            throw Error('Você já utilizou sua Ação neste turno. Mova-se ou passe o turno.');
+            throw Error(
+              'Voce ja utilizou sua Acao neste turno.'
+            );
           }
+        }
+
+        // Consome UMA unidade.
+        const consumed =
+          removeInventoryItem(
+            p.inventory || '',
+            itemDef.name,
+            1
+          );
+
+        if (consumed.removed !== 1) {
+          throw Error(
+            'Nao foi possivel consumir o item.'
+          );
+        }
+
+        p.inventory = consumed.inventory;
+
+        const healRoll =
+          roll(itemDef.healFormula);
+
+        const oldHp =
+          targetChar.hp;
+
+        targetChar.hp =
+          Math.min(
+            targetChar.maxHp,
+            targetChar.hp + healRoll.total
+          );
+
+        const actualHealed =
+          targetChar.hp - oldHp;
+
+        touchChar(targetChar);
+        touchChar(p);
+
+        if (s.combat && isMyCombat) {
           s.actionUsed = true;
         }
 
-        let healRoll = { total: 0, results: [0], bonus: 0 };
-        let itemName = 'PoÃ§Ã£o de Cura';
-        if (itemId === 'pocao-cura-maior') {
-          healRoll = roll('4d4+4');
-          itemName = 'PoÃ§Ã£o de Cura Maior';
-        } else {
-          healRoll = roll('2d4+2');
-        }
-
-        const healAmount = healRoll.total;
-        const oldHp = targetChar.hp;
-        targetChar.hp = Math.min(targetChar.maxHp, targetChar.hp + healAmount);
-        touchChar(targetChar);
-        const actualHealed = targetChar.hp - oldHp;
+        const remaining =
+          getInventoryQuantity(
+            p.inventory || '',
+            itemDef.name
+          );
 
         log(
-          `${p.name} consumiu ${itemName} em ${targetChar.name}: [${healRoll.results.join(', ')}] + ${healRoll.bonus} = recuperou ${actualHealed} PV! (${targetChar.hp}/${targetChar.maxHp} PV)`,
+          '?? ' +
+            p.name +
+            ' usou ' +
+            itemDef.name +
+            ' em ' +
+            targetChar.name +
+            ' e recuperou ' +
+            actualHealed +
+            ' PV. Restam ' +
+            remaining +
+            ' unidade(s).',
           'roll'
         );
 
@@ -1099,11 +1479,16 @@ export async function POST(req: NextRequest) {
           maxHp: targetChar.maxHp
         };
 
-        if (a.endTurn && s.combat) {
+        if (
+          a.endTurn &&
+          s.combat &&
+          isMyCombat
+        ) {
           s.actionUsed = false;
           advance(s);
           executeEnemyAI(s);
         }
+
         break;
       }
       case 'lootCorpse': {
@@ -1127,11 +1512,23 @@ export async function POST(req: NextRequest) {
 
         // Transfer items into hero inventory
         const lootedItemNames: string[] = [];
+
         for (const itemId of corpse.items) {
           const itemDef = ITEMS_CATALOG[itemId];
-          const itemName = itemDef ? itemDef.name : itemId;
+
+          const itemName =
+            itemDef
+              ? itemDef.name
+              : itemId;
+
           lootedItemNames.push(itemName);
-          p.inventory = p.inventory ? `${p.inventory}\n${itemName}` : itemName;
+
+          p.inventory =
+            addInventoryItem(
+              p.inventory || '',
+              itemName,
+              1
+            );
         }
 
         touchChar(p);
@@ -1630,49 +2027,143 @@ export async function POST(req: NextRequest) {
       }
       case 'respawn': {
         const hero = own();
+
+        const heroPartyId = hero.partyId;
+        const combatKey = heroPartyId || hero.id;
+
+        // Guarda referencia sobre a batalha ANTES de mandar para a vila.
+        const wasInCombat =
+          s.combat &&
+          (s.order || []).includes(hero.id) &&
+          (
+            !s.combatPartyId ||
+            s.combatPartyId === combatKey
+          );
+
+        const oldOrder = [...(s.order || [])];
+        const removedIndex = oldOrder.indexOf(hero.id);
+
+        if (removedIndex >= 0) {
+          s.order = oldOrder.filter((id) => id !== hero.id);
+
+          if (s.order.length === 0) {
+            s.turn = 0;
+          } else {
+            // Se removemos alguem antes do turno atual,
+            // compensamos o indice.
+            if (removedIndex < s.turn) {
+              s.turn = Math.max(0, s.turn - 1);
+            }
+
+            if (s.turn >= s.order.length) {
+              s.turn = 0;
+            }
+          }
+        }
+
         hero.hp = hero.maxHp;
         hero.conditions = [];
         hero.deathSuccess = 0;
         hero.deathFail = 0;
+
         hero.x = 4;
         hero.y = 6;
         hero.location = 0;
         hero.biome = 'village';
+
         touchChar(hero);
 
-        const heroPartyId = hero.partyId;
-        // Purge solo enemies belonging to this hero or party if wiped
-        s.enemies = (s.enemies || []).filter((e) => {
-          if (heroPartyId && e.partyId === heroPartyId) return false;
-          if (!heroPartyId && (e.ownerCharId === hero.id || (!e.partyId && !e.ownerCharId && !isMmo))) return false;
-          return true;
-        });
-        // Disengage hero from initiative order
-        s.order = (s.order || []).filter((id) => id !== hero.id);
-        if (s.combatPartyId === hero.id || (heroPartyId && s.combatPartyId === heroPartyId)) {
-          s.combatPartyId = undefined;
-        }
-        // If no more conscious party heroes are in the combat order, end combat fully
-        if (!s.characters.some((c) => c.hp > 0 && (s.order || []).includes(c.id))) {
-          s.combat = false;
-          s.combatPartyId = undefined;
-          s.order = [];
-          s.round = 0;
-          s.turn = 0;
-          s.actionUsed = false;
-          s.movementUsed = 0;
-        }
         if (!isMmo) {
           s.combat = false;
           s.combatPartyId = undefined;
           s.order = [];
+          s.turn = 0;
+          s.round = 0;
           s.actionUsed = false;
           s.movementUsed = 0;
           s.location = 0;
           s.biome = 'village';
           s.enemies = [];
+
+          log(
+            '??? ' +
+              hero.name +
+              ' recuperou a consciencia no Santuario da Vila.',
+            'gm'
+          );
+
+          break;
         }
-        log(`🕊️ ${hero.name} recuperou a consciência no santuário da Vila do Rio Verde, curado pelas águas e orações sagradas.`, 'gm');
+
+        const survivingHeroes = (s.characters || []).filter((char) => {
+          if (char.id === hero.id) return false;
+          if (char.hp <= 0) return false;
+          if (!(s.order || []).includes(char.id)) return false;
+
+          if (heroPartyId) {
+            return char.partyId === heroPartyId;
+          }
+
+          return false;
+        });
+
+        const activeEnemies = (s.enemies || []).filter((enemy) => {
+          if (enemy.hp <= 0) return false;
+          if (!(s.order || []).includes(enemy.id)) return false;
+
+          if (heroPartyId) {
+            return enemy.partyId === heroPartyId;
+          }
+
+          return enemy.ownerCharId === hero.id;
+        });
+
+        const partyBattleContinues =
+          wasInCombat &&
+          survivingHeroes.length > 0 &&
+          activeEnemies.length > 0;
+
+        if (!partyBattleContinues) {
+          const remainingLivingHeroes =
+            (s.characters || []).filter(
+              (char) =>
+                char.hp > 0 &&
+                (s.order || []).includes(char.id)
+            );
+
+          const remainingLivingEnemies =
+            (s.enemies || []).filter(
+              (enemy) =>
+                enemy.hp > 0 &&
+                (s.order || []).includes(enemy.id)
+            );
+
+          if (
+            remainingLivingHeroes.length === 0 ||
+            remainingLivingEnemies.length === 0
+          ) {
+            s.combat = false;
+            s.combatPartyId = undefined;
+            s.order = [];
+            s.turn = 0;
+            s.round = 0;
+            s.actionUsed = false;
+            s.movementUsed = 0;
+          }
+        }
+
+        log(
+          '??? ' +
+            hero.name +
+            ' renasceu no Santuario da Vila.' +
+            (
+              partyBattleContinues
+                ? ' O restante do grupo continua lutando; voce pode retornar como reforco.'
+                : ''
+            ),
+          'gm'
+        );
+
         break;
       }
       case 'chat': {
@@ -1813,8 +2304,13 @@ export async function POST(req: NextRequest) {
         }
 
         p.gold = (p.gold || 0) - finalPrice;
-        const currentInv = (p.inventory || '').trim();
-        p.inventory = currentInv ? `${currentInv}\n${itemToBuy.name}` : itemToBuy.name;
+
+        p.inventory =
+          addInventoryItem(
+            p.inventory || '',
+            itemToBuy.name,
+            1
+          );
 
         if (rawItem) {
           registerProceduralItem(rawItem);
@@ -1825,34 +2321,89 @@ export async function POST(req: NextRequest) {
       }
       case 'sellItem': {
         const p = own();
-        const itemName = String(a.itemName || '').trim();
-        if (!itemName) throw Error('Nome do item inválido para venda.');
 
-        const invLines = (p.inventory || '').split('\n').map((l) => l.trim()).filter(Boolean);
-        const itemIndex = invLines.findIndex(
-          (l) => l.toLowerCase() === itemName.toLowerCase() || l.toLowerCase().includes(itemName.toLowerCase())
-        );
+        const itemName =
+          stripInventoryQuantity(
+            String(a.itemName || '').trim()
+          );
 
-        if (itemIndex === -1) {
-          throw Error(`Você não possui "${itemName}" no inventário.`);
+        if (!itemName) {
+          throw Error(
+            'Nome do item invalido para venda.'
+          );
         }
 
-        const removedItemLine = invLines[itemIndex];
-        invLines.splice(itemIndex, 1);
-        p.inventory = invLines.join('\n');
+        const quantityBefore =
+          getInventoryQuantity(
+            p.inventory || '',
+            itemName
+          );
 
-        // Base value lookup or default
-        const catalogEntry = Object.values(ITEMS_CATALOG).find(
-          (it) => it.name.toLowerCase() === removedItemLine.toLowerCase()
-        );
-        const baseValue = catalogEntry?.value || Number(a.baseValue) || 10;
-        const priceMult = s.economyContext?.priceMultiplier || 1.0;
-        // Standard D&D 5e: merchant buys at 50% value
-        const salePrice = Math.max(1, Math.round(baseValue * 0.5 * priceMult));
+        if (quantityBefore <= 0) {
+          throw Error(
+            'Voce nao possui "' +
+              itemName +
+              '" no inventario.'
+          );
+        }
 
+        const removed =
+          removeInventoryItem(
+            p.inventory || '',
+            itemName,
+            1
+          );
+
+        if (removed.removed !== 1) {
+          throw Error(
+            'Nao foi possivel remover o item do inventario.'
+          );
+        }
+
+        const catalogEntry =
+          Object.values(ITEMS_CATALOG).find(
+            (item) =>
+              item.name.toLowerCase() ===
+              itemName.toLowerCase()
+          );
+
+        const baseValue =
+          catalogEntry?.value ||
+          Number(a.baseValue) ||
+          10;
+
+        const priceMult =
+          s.economyContext?.priceMultiplier ||
+          1.0;
+
+        const salePrice =
+          Math.max(
+            1,
+            Math.round(
+              baseValue *
+                0.5 *
+                priceMult
+            )
+          );
+
+        p.inventory = removed.inventory;
         p.gold = (p.gold || 0) + salePrice;
+
         touchChar(p);
-        log(`💰 ${p.name} vendeu "${removedItemLine}" ao mercador por +${salePrice} PO. (Saldo: ${p.gold} PO)`, 'player');
+
+        log(
+          '?? ' +
+            p.name +
+            ' vendeu 1x "' +
+            itemName +
+            '" por ' +
+            salePrice +
+            ' PO. Saldo: ' +
+            p.gold +
+            ' PO.',
+          'player'
+        );
+
         break;
       }
       case 'heartbeat': {

@@ -5,6 +5,9 @@ import { isOriginAllowed } from '@/lib/auth-origin';
 import { GM_PROMPT } from '@/lib/gm-prompt';
 import pages from '@/lib/srd.json';
 import { entry, type State } from '@/lib/game-engine';
+import { readCompactWorldContext, executeDirectorIntent } from '@/lib/sandbox-director';
+import { generateProceduralItem, type ItemTier } from '@/lib/procedural-items';
+import { MICRO_ADVENTURES } from '@/lib/micro-adventures';
 import {
   GM_CONTROLLED_TOOLS,
   executeServerAuthoritativeGmTool,
@@ -69,30 +72,66 @@ export async function POST(req: NextRequest) {
     if (!room) throw Error('Mesa não encontrada.');
 
     if (!userKey) {
-      console.warn('[GM] No GROQ_API_KEY found, providing atmospheric DM narration fallback.');
-      const fallbackNarrative = a.actionContext
-        ? `As sombras da Vila do Rio Verde movem-se silenciosas. ${a.actionContext}. O ar carrega o presságio de combates iminentes além das pontes rústicas.\n\n[1] Avançar pela ponte leste com cautela.\n[2] Falar com o Ancião Doran para instruções táticas.\n[3] Preparar os feitiços e armas do grupo.`
-        : (text
-          ? `Você avança com determinação: "${text}". Os aldeões e a guarda observam com expectativa e esperança em seus passos.\n\n[1] Explorar a margem do riacho.\n[2] Conversar com a Alquimista Elenor.\n[3] Inspecionar a ponte leste da vila.`
-          : `O sol ergue-se tímido sobre as brumas da Vila do Rio Verde. O Ancião Doran e os guardas aguardam suas ordens para enfrentar a ameaça das cinzas.\n\n[1] Aceitar a missão do Ancião Doran.\n[2] Coletar poções de cura com Elenor.\n[3] Cruzar a ponte em direção à Floresta dos Sussurros.`);
+      console.warn(
+        '[GM] No GROQ_API_KEY found, providing narrative fallback.'
+      );
 
-      const choices = [
-        'Avançar pela ponte leste com cautela',
-        'Conversar com o Ancião Doran sobre o selo rompido',
-        'Visitar a Alquimista Elenor para recolher poções de cura'
-      ];
+      const latestRoom =
+        await db
+          .prepare(
+            'SELECT state, version FROM rooms WHERE id=?'
+          )
+          .bind(room.id)
+          .first<{ state: string; version: number }>() ||
+        room;
 
-      const latestRoom = await db.prepare('SELECT state, version FROM rooms WHERE id=?').bind(room.id).first<{ state: string; version: number }>() || room;
-      const s: State = JSON.parse(latestRoom.state);
-      if (text) s.logs.push(entry(text, 'player'));
-      s.logs.push(entry(fallbackNarrative, 'gm'));
-      s.logs = s.logs.slice(-200);
-      await db.prepare('UPDATE rooms SET state=?,version=version+1 WHERE id=?').bind(JSON.stringify(s), room.id).run();
+      const fallbackState: State =
+        JSON.parse(latestRoom.state);
+
+      let fallbackNarrative = '';
+
+      if (a.actionContext) {
+        fallbackNarrative =
+          'A cena absorve o impacto do que acabou de acontecer. ' +
+          String(a.actionContext) +
+          ' O ambiente reage ao resultado j? determinado pela engine, enquanto a tens?o permanece presente.';
+      } else if (text) {
+        fallbackNarrative =
+          'Suas palavras e a??es passam a fazer parte da cena. "' +
+          text +
+          '" Pessoas, sons e pequenos sinais ao redor respondem de forma coerente com o lugar e com os acontecimentos recentes.';
+      } else {
+        fallbackNarrative =
+          'Valdoria continua viva ao redor dos aventureiros. Rotinas seguem, rumores circulam e acontecimentos distantes avan?am mesmo fora de vista.';
+      }
+
+      if (text) {
+        fallbackState.logs.push(
+          entry(text, 'player')
+        );
+      }
+
+      fallbackState.logs.push(
+        entry(fallbackNarrative, 'gm')
+      );
+
+      fallbackState.logs =
+        fallbackState.logs.slice(-200);
+
+      await db
+        .prepare(
+          'UPDATE rooms SET state=?,version=version+1 WHERE id=?'
+        )
+        .bind(
+          JSON.stringify(fallbackState),
+          room.id
+        )
+        .run();
 
       return NextResponse.json({
         ok: true,
         answer: fallbackNarrative,
-        choices,
+        choices: [],
         executedTools: [],
         searchHtml: ''
       });
@@ -101,6 +140,30 @@ export async function POST(req: NextRequest) {
     const isGroq = userKey.startsWith('gsk_') || a.provider === 'groq' || !userKey.startsWith('AIza');
 
     const state: State = JSON.parse(room.state);
+
+    const actorHero =
+      state.characters.find(
+        (hero) =>
+          hero.owner === user.userId
+      ) ||
+      state.characters.find(
+        (hero) => hero.hp > 0
+      ) ||
+      state.characters[0];
+
+    const directorContext =
+      readCompactWorldContext(
+        state,
+        room.id
+      );
+
+    const recentHistory =
+      (state.logs || [])
+        .slice(-12)
+        .map((log) => ({
+          tipo: log.kind,
+          texto: log.text.slice(0, 500)
+        }));
 
     const queryText = text || a.actionContext || '';
     const words = queryText
@@ -132,28 +195,104 @@ export async function POST(req: NextRequest) {
     }
 
     if (isGroq) {
-      const groqSystemPrompt = `Você é o Mestre de Jogo de um RPG digital D&D 5e sombrio.
-REGRAS OBRIGATÓRIAS:
-1. Narre o impacto da ação em 1 a 2 parágrafos curtos, vívidos e cinematográficos.
-2. Não recalcule nem altere regras mecânicas; reaja ao que aconteceu.
-3. Use estritamente as 5 ferramentas controladas disponíveis quando a narrativa exigir:
-   - create_encounter: quando surgir um monstro ou ameaça para combate.
-   - create_npc: quando um novo personagem do mestre (NPC) for introduzido.
-   - grant_loot: quando o grupo receber recompensas, ouro, XP ou itens.
-   - set_combat_state: para iniciar ("start") ou finalizar ("end") um combate.
-   - update_quest: para atualizar o progresso ou concluir uma missão.
-4. No fim da resposta, forneça exatamente 3 opções de ação rápida em linhas separadas iniciando com "[1]", "[2]" e "[3]".`;
+      const groqSystemPrompt =
+        GM_PROMPT +
+        '\n\nVoc? est? operando com ferramentas de INTEN??O.' +
+        '\nA engine decide todos os n?meros e resultados mec?nicos.' +
+        '\nDurante combate, nenhuma ferramenta de dire??o de mundo fica dispon?vel.' +
+        '\nN?o gere menus [1], [2], [3] e n?o sugira comandos mec?nicos da interface.';
 
       const promptPayload = {
-        contexto: a.actionContext || undefined,
-        acaoJogador: text || undefined,
-        referenciaSRD: relevant || undefined,
-        estado: {
-          combate: state.combat,
-          rodada: state.round,
-          herois: state.characters.map((c) => `${c.name} (${c.hp}/${c.maxHp} PV)`),
-          inimigos: state.enemies.filter((e) => e.hp > 0).map((e) => `${e.name} (${e.hp}/${e.maxHp} PV)`)
-        }
+        idiomaPadrao: 'pt-BR',
+
+        contextoDaEngine:
+          a.actionContext ||
+          undefined,
+
+        mensagemDoJogador:
+          text ||
+          undefined,
+
+        referenciaSRD:
+          relevant ||
+          undefined,
+
+        jogador: actorHero
+          ? {
+              nome: actorHero.name,
+              classe: actorHero.className,
+              nivel: actorHero.level,
+              bioma:
+                actorHero.biome ||
+                state.biome,
+              local:
+                actorHero.location ??
+                state.location,
+              grupo:
+                actorHero.partyId ||
+                null
+            }
+          : null,
+
+        mundo:
+          directorContext,
+
+        campanha: {
+          microaventuraAtiva:
+            state.activeMicroAdventureId ||
+            null,
+
+          progresso:
+            state.questProgress ||
+            {},
+
+          consequencias:
+            state.worldFlags ||
+            {},
+
+          economia:
+            state.economyContext ||
+            null
+        },
+
+        combate: {
+          ativo:
+            state.combat,
+
+          rodada:
+            state.round,
+
+          herois:
+            state.characters.map(
+              (hero) => ({
+                nome: hero.name,
+                hp: hero.hp,
+                maxHp: hero.maxHp,
+                nivel: hero.level,
+                bioma:
+                  hero.biome ||
+                  state.biome
+              })
+            ),
+
+          inimigosVisiveis:
+            state.enemies
+              .filter(
+                (enemy) =>
+                  enemy.hp > 0
+              )
+              .map(
+                (enemy) => ({
+                  nome: enemy.name,
+                  bioma:
+                    enemy.biome ||
+                    state.biome
+                })
+              )
+        },
+
+        memoriaRecente:
+          recentHistory
       };
 
       const candidateModels = ['openai/gpt-oss-20b', 'qwen/qwen3.6-27b', 'openai/gpt-oss-120b'];
@@ -171,10 +310,17 @@ REGRAS OBRIGATÓRIAS:
                 { role: 'system', content: groqSystemPrompt },
                 { role: 'user', content: JSON.stringify(promptPayload) }
               ],
-              tools: GM_CONTROLLED_TOOLS,
-              tool_choice: 'auto',
-              temperature: 0.65,
-              max_tokens: 450
+              tools:
+                state.combat
+                  ? undefined
+                  : GM_CONTROLLED_TOOLS,
+
+              tool_choice:
+                state.combat
+                  ? undefined
+                  : 'auto',
+              temperature: 0.78,
+              max_tokens: 700
             }),
             signal: AbortSignal.timeout(12000)
           });
@@ -227,16 +373,24 @@ REGRAS OBRIGATÓRIAS:
         }
       }
 
-      // If all Groq models hit quota limit, smoothly synthesize high-quality cinematic DM narrative
+      // Fallback narrativo caso os modelos Groq n?o retornem texto.
       if (!answer) {
         if (a.actionContext) {
-          answer = `As lâminas e energias ressoam pelas paredes de pedra da abadia. ${a.actionContext}. O ar treme com a tensão do confronto.\n\n[1] Pressionar o ataque com determinação.\n[2] Recuar dois passos e avaliar as fraquezas do inimigo.\n[3] Buscar cobertura nas colunas de pedra.`;
+          answer =
+            'O resultado da a??o reverbera pela cena. ' +
+            String(a.actionContext) +
+            ' O ambiente responde ao acontecimento sem alterar qualquer resultado determinado pela engine.';
         } else if (text) {
-          answer = `Você executa sua ação com precisão pelas ruínas da abadia: "${text}". O ambiente reage às suas palavras e passos cautelosos.\n\n[1] Investigar os arredores imediatos.\n[2] Manter a guarda erguida e avançar devagar.\n[3] Consultar seus companheiros sobre o próximo passo.`;
+          answer =
+            'A inten??o de "' +
+            text +
+            '" passa a fazer parte da cena. O mundo reage de forma coerente com o local e com os acontecimentos recentes.';
         } else {
-          answer = `Uma brisa gélida passa pelas fendas do claustro. A névoa parece sussurrar segredos esquecidos pelos séculos.\n\n[1] Avançar pelo corredor central.\n[2] Inspecionar os altares rúnicos.\n[3] Preparar armas para uma emboscada.`;
+          answer =
+            'O mundo continua em movimento. H? rotinas, rumores e mudan?as discretas acontecendo al?m do alcance imediato dos aventureiros.';
         }
       }
+
     } else {
       // Gemini Fallback
       const response = await fetch(
@@ -249,11 +403,11 @@ REGRAS OBRIGATÓRIAS:
             contents: [
               {
                 role: 'user',
-                parts: [{ text: JSON.stringify({ state, reference: relevant, player: user.displayName, message: text }) }]
+                parts: [{ text: JSON.stringify(promptPayload) }]
               }
             ],
             tools: a.search ? [{ google_search: {} }] : undefined,
-            generationConfig: { maxOutputTokens: 1500, temperature: 0.65 }
+            generationConfig: { maxOutputTokens: 1500, temperature: 0.75 }
           }),
           signal: AbortSignal.timeout(30000)
         }
@@ -281,16 +435,21 @@ REGRAS OBRIGATÓRIAS:
 
     if (!answer) throw Error('A IA não retornou resposta. Tente novamente.');
 
-    // Parse choices
-    const choiceRegex = /(?:^|\n)\s*(?:\[(\d+)\]|\b(\d+)[\.\)])\s*([^\n\r]+)/g;
-    const choices: string[] = [];
-    let match;
-    while ((match = choiceRegex.exec(answer)) !== null) {
-      const optionText = match[3]?.trim();
-      if (optionText && optionText.length > 3 && !choices.includes(optionText)) {
-        choices.push(optionText);
-      }
+    // A GM n?o produz menus de a??es. A interface/engine cuida da jogabilidade.
+    answer = answer
+      .replace(
+        /(?:^|\n)\s*(?:\[\d+\]|\d+[\.\)])\s*[^\n\r]+/g,
+        ''
+      )
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    if (!answer) {
+      answer =
+        'A cena permanece aberta ?s decis?es dos aventureiros.';
     }
+
+    const choices: string[] = [];
 
     // Always fetch the freshest room state right before appending logs and executing tools
     const latestRoom = await db
@@ -303,10 +462,711 @@ REGRAS OBRIGATÓRIAS:
     if (latestRoom) {
       const latestState: State = JSON.parse(latestRoom.state);
 
-      // Execute authoritative tools on latest state
+      // Execute only safe narrative intentions on the freshest state.
+      const latestActorHero =
+        latestState.characters.find(
+          (hero) =>
+            hero.owner === user.userId
+        ) ||
+        latestState.characters.find(
+          (hero) => hero.hp > 0
+        ) ||
+        latestState.characters[0];
+
+      const safeDirectorTools =
+        new Set([
+          'request_creature_spawn',
+          'request_temporary_npc',
+          'request_loot',
+          'request_environmental_event',
+          'request_microadventure',
+          'influence_economy',
+          'adjust_ecosystem'
+        ]);
+
       for (const call of rawToolCalls) {
-        const result = executeServerAuthoritativeGmTool(call.name, call.args, latestState);
-        executedTools.push(result);
+        if (!safeDirectorTools.has(call.name)) {
+          executedTools.push({
+            tool: call.name,
+            success: false,
+            message:
+              'Inten??o rejeitada: a GM n?o possui autoridade para executar essa opera??o.'
+          });
+          continue;
+        }
+
+        if (latestState.combat) {
+          executedTools.push({
+            tool: call.name,
+            success: false,
+            message:
+              'Dire??o de mundo pausada durante combate. A engine de combate permanece soberana.'
+          });
+          continue;
+        }
+
+        if (!latestActorHero) {
+          executedTools.push({
+            tool: call.name,
+            success: false,
+            message:
+              'Nenhum personagem ativo dispon?vel para contextualizar esta inten??o.'
+          });
+          continue;
+        }
+
+        if (call.name === 'request_creature_spawn') {
+          const threat =
+            String(
+              call.args.threat ||
+              'moderada'
+            );
+
+          const requestedTier =
+            threat === 'alta' ||
+            threat === 'chefe'
+              ? 3
+              : threat === 'moderada'
+                ? 2
+                : 1;
+
+          const maxTier =
+            latestActorHero.level >= 8
+              ? 3
+              : latestActorHero.level >= 4
+                ? 2
+                : 1;
+
+          const finalTier =
+            Math.min(
+              requestedTier,
+              maxTier
+            ) as ItemTier;
+
+          const requestedCount =
+            Math.max(
+              1,
+              Math.min(
+                3,
+                Math.trunc(
+                  Number(call.args.count) || 1
+                )
+              )
+            );
+
+          const count =
+            threat === 'chefe'
+              ? 1
+              : requestedCount;
+
+          let created = 0;
+          const messages: string[] = [];
+
+          for (let i = 0; i < count; i++) {
+            const existingIds =
+              new Set(
+                latestState.enemies.map(
+                  (enemy) => enemy.id
+                )
+              );
+
+            const decision =
+              executeDirectorIntent(
+                'request_creature_spawn',
+                {
+                  creatureName:
+                    String(
+                      call.args.creatureName ||
+                      'Criatura das Cinzas'
+                    ).slice(0, 40),
+
+                  tier:
+                    finalTier,
+
+                  reason:
+                    String(
+                      call.args.reason ||
+                      'Evolu??o org?nica do mundo.'
+                    ).slice(0, 200)
+                },
+                latestState,
+                room.id
+              );
+
+            if (
+              decision.validation.approved
+            ) {
+              created++;
+
+              const spawned =
+                [...latestState.enemies]
+                  .reverse()
+                  .find(
+                    (enemy) =>
+                      !existingIds.has(
+                        enemy.id
+                      )
+                  );
+
+              if (spawned) {
+                spawned.biome =
+                  latestActorHero.biome ||
+                  latestState.biome ||
+                  'forest';
+
+                if (
+                  latestActorHero.partyId
+                ) {
+                  spawned.partyId =
+                    latestActorHero.partyId;
+
+                  spawned.ownerCharId =
+                    undefined;
+                } else {
+                  spawned.ownerCharId =
+                    latestActorHero.id;
+
+                  spawned.partyId =
+                    undefined;
+                }
+
+                spawned.x =
+                  Math.max(
+                    0,
+                    Math.min(
+                      15,
+                      latestActorHero.x +
+                        3 +
+                        (i % 2)
+                    )
+                  );
+
+                spawned.y =
+                  Math.max(
+                    0,
+                    Math.min(
+                      15,
+                      latestActorHero.y +
+                        2 +
+                        Math.floor(i / 2)
+                    )
+                  );
+              }
+            }
+
+            messages.push(
+              decision.validation.reason
+            );
+
+            if (
+              !decision.validation.approved
+            ) {
+              break;
+            }
+          }
+
+          executedTools.push({
+            tool: call.name,
+            success: created > 0,
+            message:
+              created > 0
+                ? 'Engine aprovou ' +
+                  created +
+                  ' criatura(s) no tier ' +
+                  finalTier +
+                  '. ' +
+                  messages.join(' ')
+                : messages.join(' ') ||
+                  'Spawn recusado pela engine.'
+          });
+
+          continue;
+        }
+
+        if (call.name === 'request_temporary_npc') {
+          const before =
+            new Set(
+              (latestState.npcs || []).map(
+                (npc) => npc.id
+              )
+            );
+
+          const decision =
+            executeDirectorIntent(
+              'request_temporary_npc',
+              {
+                name:
+                  String(
+                    call.args.name ||
+                    'Viajante'
+                  ).slice(0, 40),
+
+                role:
+                  String(
+                    call.args.role ||
+                    'Habitante'
+                  ).slice(0, 50),
+
+                description:
+                  String(
+                    call.args.description ||
+                    ''
+                  ).slice(0, 150),
+
+                reason:
+                  String(
+                    call.args.reason ||
+                    ''
+                  ).slice(0, 180)
+              },
+              latestState,
+              room.id
+            );
+
+          if (
+            decision.validation.approved
+          ) {
+            const npc =
+              [...(latestState.npcs || [])]
+                .reverse()
+                .find(
+                  (candidate) =>
+                    !before.has(candidate.id)
+                );
+
+            if (npc) {
+              npc.biome =
+                latestActorHero.biome ||
+                latestState.biome ||
+                'village';
+
+              npc.x =
+                Math.max(
+                  0,
+                  Math.min(
+                    15,
+                    latestActorHero.x + 2
+                  )
+                );
+
+              npc.y =
+                Math.max(
+                  0,
+                  Math.min(
+                    15,
+                    latestActorHero.y + 1
+                  )
+                );
+            }
+          }
+
+          executedTools.push({
+            tool: call.name,
+            success:
+              decision.validation.approved,
+            message:
+              decision.validation.reason
+          });
+
+          continue;
+        }
+
+        if (call.name === 'request_environmental_event') {
+          const decision =
+            executeDirectorIntent(
+              'request_environmental_event',
+              {
+                text:
+                  String(
+                    call.args.text ||
+                    ''
+                  ).slice(0, 180),
+
+                reason:
+                  String(
+                    call.args.reason ||
+                    ''
+                  ).slice(0, 180)
+              },
+              latestState,
+              room.id
+            );
+
+          executedTools.push({
+            tool: call.name,
+            success:
+              decision.validation.approved,
+            message:
+              decision.validation.reason
+          });
+
+          continue;
+        }
+
+        if (call.name === 'request_microadventure') {
+          const flags =
+            latestState.worldFlags ||
+            {};
+
+          const eligible =
+            Object.values(
+              MICRO_ADVENTURES
+            ).filter(
+              (adventure) => {
+                if (
+                  flags[
+                    'completed_' +
+                      adventure.id
+                  ]
+                ) {
+                  return false;
+                }
+
+                if (
+                  !adventure.requiredFlags ||
+                  adventure.requiredFlags.length === 0
+                ) {
+                  return true;
+                }
+
+                return adventure.requiredFlags.every(
+                  (flag) =>
+                    Boolean(flags[flag])
+                );
+              }
+            );
+
+          if (
+            latestState.activeMicroAdventureId
+          ) {
+            executedTools.push({
+              tool: call.name,
+              success: false,
+              message:
+                'J? existe uma microaventura ativa.'
+            });
+
+            continue;
+          }
+
+          if (eligible.length === 0) {
+            executedTools.push({
+              tool: call.name,
+              success: false,
+              message:
+                'Nenhuma microaventura est? dispon?vel para o progresso atual.'
+            });
+
+            continue;
+          }
+
+          const theme =
+            String(
+              call.args.theme ||
+              ''
+            ).toLowerCase();
+
+          const scored =
+            eligible
+              .map(
+                (adventure) => ({
+                  adventure,
+                  score:
+                    theme &&
+                    (
+                      adventure.title
+                        .toLowerCase()
+                        .includes(theme) ||
+                      adventure.subtitle
+                        .toLowerCase()
+                        .includes(theme)
+                    )
+                      ? 1
+                      : 0
+                })
+              )
+              .sort(
+                (a, b) =>
+                  b.score - a.score
+              );
+
+          const selectedAdventure =
+            scored[0].adventure;
+
+          const decision =
+            executeDirectorIntent(
+              'request_microadventure',
+              {
+                adventureId:
+                  selectedAdventure.id,
+
+                reason:
+                  String(
+                    call.args.reason ||
+                    'Oportunidade de aventura no mundo.'
+                  ).slice(0, 180)
+              },
+              latestState,
+              room.id
+            );
+
+          executedTools.push({
+            tool: call.name,
+            success:
+              decision.validation.approved,
+            message:
+              decision.validation.reason
+          });
+
+          continue;
+        }
+
+        if (call.name === 'influence_economy') {
+          const trend =
+            String(
+              call.args.trend ||
+              'estavel'
+            );
+
+          const multiplier =
+            trend === 'escassez'
+              ? 1.12
+              : trend === 'abundancia'
+                ? 0.92
+                : 1.0;
+
+          const decision =
+            executeDirectorIntent(
+              'influence_economy',
+              {
+                multiplier,
+                reason:
+                  String(
+                    call.args.reason ||
+                    'Mudan?a natural das rotas comerciais.'
+                  ).slice(0, 180)
+              },
+              latestState,
+              room.id
+            );
+
+          executedTools.push({
+            tool: call.name,
+            success:
+              decision.validation.approved,
+            message:
+              decision.validation.reason
+          });
+
+          continue;
+        }
+
+        if (call.name === 'adjust_ecosystem') {
+          const signal =
+            String(
+              call.args.signal ||
+              'corvos'
+            );
+
+          const critterType =
+            signal === 'rastros_lobos'
+              ? 'lobos_rastros'
+              : signal === 'cervos'
+                ? 'cervos'
+                : 'corvos';
+
+          const decision =
+            executeDirectorIntent(
+              'adjust_ecosystem',
+              {
+                critterType,
+                reason:
+                  String(
+                    call.args.reason ||
+                    'Mudan?a natural do ecossistema.'
+                  ).slice(0, 180)
+              },
+              latestState,
+              room.id
+            );
+
+          executedTools.push({
+            tool: call.name,
+            success:
+              decision.validation.approved,
+            message:
+              decision.validation.reason
+          });
+
+          continue;
+        }
+
+        if (call.name === 'request_loot') {
+          const rewardClass =
+            String(
+              call.args.rewardClass ||
+              'normal'
+            );
+
+          const requestedTier =
+            rewardClass === 'importante'
+              ? 3
+              : rewardClass === 'normal'
+                ? 2
+                : 1;
+
+          const maxTier =
+            latestActorHero.level >= 8
+              ? 3
+              : latestActorHero.level >= 4
+                ? 2
+                : 1;
+
+          const tier =
+            Math.min(
+              requestedTier,
+              maxTier
+            ) as ItemTier;
+
+          const kind =
+            ['ouro', 'item', 'misto'].includes(
+              String(call.args.rewardKind)
+            )
+              ? String(call.args.rewardKind)
+              : 'misto';
+
+          const party =
+            latestActorHero.partyId
+              ? latestState.characters.filter(
+                  (hero) =>
+                    hero.partyId ===
+                    latestActorHero.partyId
+                )
+              : [latestActorHero];
+
+          const recipients =
+            call.args.scope === 'grupo'
+              ? party
+              : [latestActorHero];
+
+          const totalGold =
+            rewardClass === 'importante'
+              ? 60
+              : rewardClass === 'normal'
+                ? 25
+                : 10;
+
+          const eachGold =
+            Math.max(
+              1,
+              Math.floor(
+                totalGold /
+                Math.max(
+                  1,
+                  recipients.length
+                )
+              )
+            );
+
+          const resultMessages: string[] = [];
+          let success = false;
+
+          if (
+            kind === 'ouro' ||
+            kind === 'misto'
+          ) {
+            for (
+              const recipient of recipients
+            ) {
+              const result =
+                executeServerAuthoritativeGmTool(
+                  'grant_loot',
+                  {
+                    targetHeroId:
+                      recipient.id,
+
+                    gold:
+                      eachGold,
+
+                    xp:
+                      0,
+
+                    reason:
+                      String(
+                        call.args.reason ||
+                        'Recompensa narrativa.'
+                      ).slice(0, 180)
+                  },
+                  latestState
+                );
+
+              success =
+                success ||
+                result.success;
+
+              resultMessages.push(
+                result.message
+              );
+            }
+          }
+
+          if (
+            kind === 'item' ||
+            kind === 'misto'
+          ) {
+            const generatedItem =
+              generateProceduralItem(
+                tier,
+                Date.now() +
+                  latestState.logs.length
+              );
+
+            const result =
+              executeServerAuthoritativeGmTool(
+                'grant_loot',
+                {
+                  targetHeroId:
+                    latestActorHero.id,
+
+                  itemId:
+                    generatedItem.id,
+
+                  itemName:
+                    generatedItem.name,
+
+                  gold:
+                    0,
+
+                  xp:
+                    0,
+
+                  reason:
+                    String(
+                      call.args.reason ||
+                      'Recompensa narrativa.'
+                    ).slice(0, 180)
+                },
+                latestState
+              );
+
+            success =
+              success ||
+              result.success;
+
+            resultMessages.push(
+              result.message
+            );
+          }
+
+          executedTools.push({
+            tool: call.name,
+            success,
+            message:
+              resultMessages.join(' ')
+          });
+
+          continue;
+        }
       }
 
       if (text) {
