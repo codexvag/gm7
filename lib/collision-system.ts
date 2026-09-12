@@ -20,8 +20,10 @@ export interface CollisionPolygon {
   points: [number, number][];
 }
 
+export type BiomeType = 'village' | 'forest' | 'ruins' | 'dungeon' | 'canyon' | 'lair';
+
 export interface MapCollisionProfile {
-  biome: 'village' | 'forest' | 'dungeon';
+  biome: BiomeType;
   imageSrc: string;
   // Normalized obstacle polygons (blocked to movement)
   obstacles: CollisionPolygon[];
@@ -474,7 +476,7 @@ export const VILLAGE_CUSTOM_ZONES: CollisionPolygon[] = [
 /**
  * Normalized collision profiles matching the illustrated maps in public/maps/
  */
-export const MAP_COLLISION_PROFILES: Record<'village' | 'forest' | 'dungeon', MapCollisionProfile> = {
+export const MAP_COLLISION_PROFILES: Record<BiomeType, MapCollisionProfile> = {
   village: {
     biome: 'village',
     imageSrc: '/maps/vila.png',
@@ -648,6 +650,63 @@ export const MAP_COLLISION_PROFILES: Record<'village' | 'forest' | 'dungeon', Ma
         ]
       }
     ]
+  },
+  ruins: {
+    biome: 'ruins',
+    imageSrc: '/maps/ruinas.png',
+    gridSize: 12,
+    obstacles: [
+      {
+        id: 'ruins-wall-top',
+        name: 'Muralha Norte',
+        type: 'obstacle',
+        points: [[0.0, 0.0], [1.0, 0.0], [1.0, 0.08], [0.0, 0.08]]
+      },
+      {
+        id: 'ruins-wall-bottom',
+        name: 'Muralha Sul',
+        type: 'obstacle',
+        points: [[0.0, 0.92], [1.0, 0.92], [1.0, 1.0], [0.0, 1.0]]
+      }
+    ]
+  },
+  canyon: {
+    biome: 'canyon',
+    imageSrc: '/maps/canyon.png',
+    gridSize: 12,
+    obstacles: [
+      {
+        id: 'canyon-north-ridge',
+        name: 'Paredão Norte',
+        type: 'obstacle',
+        points: [[0.0, 0.0], [1.0, 0.0], [1.0, 0.08], [0.0, 0.08]]
+      },
+      {
+        id: 'canyon-south-ridge',
+        name: 'Paredão Sul',
+        type: 'obstacle',
+        points: [[0.0, 0.92], [1.0, 0.92], [1.0, 1.0], [0.0, 1.0]]
+      }
+    ]
+  },
+  lair: {
+    biome: 'lair',
+    imageSrc: '/maps/covil.png',
+    gridSize: 12,
+    obstacles: [
+      {
+        id: 'lair-perimeter-top',
+        name: 'Borda Vulcânica Norte',
+        type: 'obstacle',
+        points: [[0.0, 0.0], [1.0, 0.0], [1.0, 0.08], [0.0, 0.08]]
+      },
+      {
+        id: 'lair-perimeter-bottom',
+        name: 'Borda Vulcânica Sul',
+        type: 'obstacle',
+        points: [[0.0, 0.92], [1.0, 0.92], [1.0, 1.0], [0.0, 1.0]]
+      }
+    ]
   }
 };
 
@@ -669,7 +728,7 @@ export function isPointInsidePolygon(point: [number, number], polygon: [number, 
 /**
  * Check if a normalized coordinate [0..1] is walkable in the given biome
  */
-export function isNormalizedCoordWalkable(biome: 'village' | 'forest' | 'dungeon', nx: number, ny: number): boolean {
+export function isNormalizedCoordWalkable(biome: BiomeType, nx: number, ny: number): boolean {
   const profile = MAP_COLLISION_PROFILES[biome];
   if (!profile) return true;
 
@@ -706,7 +765,7 @@ export function isNormalizedCoordWalkable(biome: 'village' | 'forest' | 'dungeon
  * Checks tile center and sub-tile clearance so thin obstacles don't inflate ("estourar") the whole tile.
  */
 export function isGridTileWalkable(
-  biome: 'village' | 'forest' | 'dungeon',
+  biome: BiomeType,
   gx: number,
   gy: number,
   gridSize: number,
@@ -734,7 +793,7 @@ export function isGridTileWalkable(
 export function findPathAStar(
   start: Point,
   goal: Point,
-  biome: 'village' | 'forest' | 'dungeon',
+  biome: BiomeType,
   gridSize: number,
   occupiedTiles: Set<string> = new Set(),
   customPolygons?: CollisionPolygon[]

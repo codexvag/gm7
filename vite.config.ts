@@ -33,6 +33,40 @@ const localBindingConfig = {
     : [],
 };
 
+function gameWebSocketPlugin() {
+  return {
+    name: "game-websocket-server",
+    configureServer(server: any) {
+      server.httpServer?.on("upgrade", async (req: any, socket: any, head: any) => {
+        try {
+          const url = new URL(req.url || "", "http://localhost");
+          if (url.pathname === "/api/game/ws") {
+            // @ts-expect-error ws lacks bundled type declaration in dev environment
+            const { WebSocketServer } = await import("ws");
+            if (!server.__gameWss) {
+              server.__gameWss = new WebSocketServer({ noServer: true });
+            }
+            const wss = server.__gameWss;
+            wss.handleUpgrade(req, socket, head, async (clientWs: any) => {
+              try {
+                const roomId = url.searchParams.get("room") || "mmo-world-village";
+                const userId = url.searchParams.get("userId") || "anon";
+                const mod = await server.ssrLoadModule("/lib/durable-objects/game-room-do.ts");
+                const room = mod.getOrCreateGameRoom(roomId);
+                await room.handleConnection(clientWs, userId);
+              } catch (connErr) {
+                console.error("[Vite WS Connection Error]:", connErr);
+              }
+            });
+          }
+        } catch (err) {
+          console.error("[Vite Game WS Upgrade Error]:", err);
+        }
+      });
+    },
+  };
+}
+
 export default defineConfig(async () => {
   // Use Miniflare's local Request.cf placeholder unless fetching is requested.
   process.env.CLOUDFLARE_CF_FETCH_ENABLED ??= "false";
@@ -59,6 +93,7 @@ export default defineConfig(async () => {
     plugins: [
       vinext(),
       sites(),
+      gameWebSocketPlugin(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
         inspectorPort: false,

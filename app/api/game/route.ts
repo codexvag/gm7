@@ -35,6 +35,7 @@ import { isGridTileWalkable, MAP_COLLISION_PROFILES, type CollisionPolygon } fro
 import fs from 'node:fs';
 import path from 'node:path';
 import { emitRoomUpdate } from '@/lib/room-events';
+import { touchChar } from '@/lib/state-merge';
 
 const collisionZoneMemoryCache = new Map<string, { mtime: number; zones: CollisionPolygon[] }>();
 
@@ -362,6 +363,7 @@ export async function POST(req: NextRequest) {
         if (s.combat && !isEquipmentUpdate && !isHpOrConditionUpdate && !owner) throw Error('Encerre o combate antes de editar atributos da ficha.');
         let next = validateCharacter(rawChar);
         next = calculateEquippedStats(next);
+        touchChar(next);
         if (old && (isMmo ? old.owner && old.owner !== user.userId : (!owner && old.owner !== user.userId))) {
           throw Error('Esta ficha pertence a outro jogador.');
         }
@@ -420,6 +422,8 @@ export async function POST(req: NextRequest) {
           }
         ];
         for (const p of s.characters) p.initiative = d20().raw + mod(p.stats[1]) + 3 - 2 * p.exhaustion; // +3 hero preparation bonus
+        for (const p of s.characters) touchChar(p);
+        for (const e of s.enemies) touchChar(e);
         s.order = [...s.characters.filter((x) => x.hp > 0), ...s.enemies]
           .sort((a, b) => b.initiative - a.initiative || a.id.localeCompare(b.id))
           .map((x) => x.id);
@@ -490,6 +494,7 @@ export async function POST(req: NextRequest) {
         );
         clientAttackResult = res;
         target.hp = res.hpAfter;
+        touchChar(target);
         s.actionUsed = true;
         log(res.text, 'roll');
 
@@ -590,6 +595,7 @@ export async function POST(req: NextRequest) {
           );
           clientAttackResult = res;
           target.hp = res.hpAfter;
+          touchChar(target);
           s.actionUsed = true;
           log(`✨ [${spellName}${spellLevel > 0 ? ' • Nível ' + spellLevel : ' • Truque'}] ${res.text}`, 'roll');
 
@@ -629,6 +635,7 @@ export async function POST(req: NextRequest) {
           const healRoll = roll(a.healFormula);
           const oldHp = targetChar.hp;
           targetChar.hp = Math.min(targetChar.maxHp, targetChar.hp + healRoll.total);
+          touchChar(targetChar);
           const healed = targetChar.hp - oldHp;
           clientHealResult = {
             targetId: targetChar.id,
@@ -684,6 +691,7 @@ export async function POST(req: NextRequest) {
         const healAmount = healRoll.total;
         const oldHp = targetChar.hp;
         targetChar.hp = Math.min(targetChar.maxHp, targetChar.hp + healAmount);
+        touchChar(targetChar);
         const actualHealed = targetChar.hp - oldHp;
 
         log(
@@ -760,6 +768,7 @@ export async function POST(req: NextRequest) {
 
         p.x = x;
         p.y = y;
+        touchChar(p);
         if (s.combat) {
           s.movementUsed = (s.movementUsed || 0) + validation.distance;
         }
@@ -771,6 +780,7 @@ export async function POST(req: NextRequest) {
         for (const p of s.characters) {
           if (p.hp > 0 && p.hp < p.maxHp) {
             const res = shortRestHeal(p);
+            touchChar(p);
             logMsg += `${p.name} ${res.rollText}. `;
           }
         }
@@ -789,6 +799,7 @@ export async function POST(req: NextRequest) {
           p.deathFail = 0;
           p.deathSuccess = 0;
           p.exhaustion = Math.max(0, p.exhaustion - 1);
+          touchChar(p);
         }
         log('O grupo concluiu um descanso longo (8h). PV e espaços de magia restaurados.', 'roll');
         break;
@@ -1236,11 +1247,29 @@ export async function POST(req: NextRequest) {
 
     // Instant real-time broadcast to all SSE stream subscribers
     try {
+      let actionPayload: any = undefined;
+      if (a.action === 'move' && c) {
+        actionPayload = {
+          characterId: c.id,
+          x: c.x,
+          y: c.y,
+          waypoints: a.waypoints || [{ x: c.x, y: c.y }],
+          seq: Date.now()
+        };
+      } else if (a.action === 'attack') {
+        actionPayload = {
+          characterId: a.character,
+          targetId: a.target || a.targetId,
+          attackResult: clientAttackResult
+        };
+      }
+
       emitRoomUpdate(r.id, {
         version: r.version + 1,
         state: s,
         originUserId: user?.userId,
-        actionType: String(a.action || '')
+        actionType: String(a.action || ''),
+        actionPayload
       });
     } catch (err) {
       console.warn('Real-time emit notice:', err);

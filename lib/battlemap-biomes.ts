@@ -17,7 +17,7 @@ export type OrganicTileType =
   | 'stairs'
   | 'pillar';
 
-export type BiomeType = 'village' | 'forest' | 'dungeon';
+export type BiomeType = 'village' | 'forest' | 'ruins' | 'dungeon' | 'canyon' | 'lair';
 
 export interface BattlemapTile {
   x: number;
@@ -339,7 +339,7 @@ export function generateBattlemap(
       interactables,
       seed: customSeed
     };
-  } else {
+  } else if (biome === 'dungeon') {
     // -------------------------------------------------------------
     // BIOMA 3: CATACUMBAS E TEMPLO MODULAR (Inspirado na Referência 2)
     // Câmaras conectadas, colunas, altares, piscinas de água ritual e escadas
@@ -438,9 +438,297 @@ export function generateBattlemap(
       interactables,
       seed: customSeed
     };
+  } else if (biome === 'ruins') {
+    // -------------------------------------------------------------
+    // BIOMA 4: PÁTIO DA ANTIGA ABADIA (Ruínas Externas)
+    // -------------------------------------------------------------
+    initGrid('building_floor');
+
+    // Manchas de vegetação rasteira
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if ((x * 2 + y * 3) % 5 === 0 && x > 1 && x < width - 2 && y > 1 && y < height - 2) {
+          tiles[y][x].type = 'grass';
+        }
+      }
+    }
+
+    // Muralhas quebradas com passagens naturais
+    const midX = Math.floor(width / 2);
+    const midY = Math.floor(height / 2);
+    for (let x = 0; x < width; x++) {
+      if (x !== midX && x !== midX - 1) {
+        tiles[0][x].type = 'building_wall';
+        tiles[0][x].blocksMovement = true;
+        tiles[0][x].blocksSight = true;
+        tiles[height - 1][x].type = 'building_wall';
+        tiles[height - 1][x].blocksMovement = true;
+        tiles[height - 1][x].blocksSight = true;
+      }
+    }
+    for (let y = 0; y < height; y++) {
+      if (y !== midY && y !== midY - 1) {
+        tiles[y][0].type = 'building_wall';
+        tiles[y][0].blocksMovement = true;
+        tiles[y][0].blocksSight = true;
+        tiles[y][width - 1].type = 'building_wall';
+        tiles[y][width - 1].blocksMovement = true;
+        tiles[y][width - 1].blocksSight = true;
+      }
+    }
+
+    // Colunas de basalto caídas
+    const pX1 = Math.floor(width * 0.3);
+    const pX2 = Math.floor(width * 0.7);
+    const pY1 = Math.floor(height * 0.3);
+    const pY2 = Math.floor(height * 0.7);
+    [
+      { x: pX1, y: pY1 },
+      { x: pX2, y: pY1 },
+      { x: pX1, y: pY2 },
+      { x: pX2, y: pY2 }
+    ].forEach((p) => {
+      if (p.x < width && p.y < height) {
+        tiles[p.y][p.x].type = 'pillar';
+        tiles[p.y][p.x].blocksMovement = true;
+        tiles[p.y][p.x].blocksSight = true;
+      }
+    });
+
+    // Altar central calcinado
+    tiles[midY][midX].type = 'shrine';
+    interactables.push({
+      x: midX,
+      y: midY,
+      type: 'shrine',
+      name: 'Altar das Cinzas Ancestrais',
+      description: 'Mesa de pedra enegrecida por labaredas arcanas, coberta de oferendas e cinzas frias.'
+    });
+
+    // Baú secreto em nicho de pedra
+    const chestX = width - 3;
+    const chestY = 2;
+    tiles[chestY][chestX].type = 'chest';
+    interactables.push({
+      x: chestX,
+      y: chestY,
+      type: 'chest',
+      name: 'Arca dos Monges Caídos',
+      description: 'Caixa de ferro e mogno resistente ao fogo, deixada para trás durante a queda da abadia.'
+    });
+
+    // Escadas para as catacumbas
+    const stairsX = 2;
+    const stairsY = height - 3;
+    tiles[stairsY][stairsX].type = 'stairs';
+    interactables.push({
+      x: stairsX,
+      y: stairsY,
+      type: 'stairs',
+      name: 'Passagem para as Catacumbas',
+      description: 'Degraus escavados que descem para os túmulos subterrâneos.'
+    });
+
+    return {
+      id: `map-ruins-${customSeed}`,
+      name: 'Pátio das Ruínas da Abadia',
+      biome: 'ruins',
+      width,
+      height,
+      tiles,
+      description: 'Antigos claustros sob névoa de fuligem. Paredes derruídas, colunas caídas e o altar central profanado por sacerdotes das cinzas.',
+      spawnHero: { x: 1, y: midY },
+      spawnEnemy: { x: width - 3, y: midY },
+      interactables,
+      seed: customSeed
+    };
+  } else if (biome === 'canyon') {
+    // -------------------------------------------------------------
+    // BIOMA 5: DESFILADEIRO DA FENDA ESCARPADA (Trilha Vulcânica)
+    // -------------------------------------------------------------
+    initGrid('road');
+
+    // Paredões rochosos nas margens norte e sul
+    for (let x = 0; x < width; x++) {
+      tiles[0][x].type = 'building_wall';
+      tiles[0][x].blocksMovement = true;
+      tiles[0][x].blocksSight = true;
+      tiles[height - 1][x].type = 'building_wall';
+      tiles[height - 1][x].blocksMovement = true;
+      tiles[height - 1][x].blocksSight = true;
+    }
+
+    // Fenda profunda central
+    const chasmX = Math.floor(width * 0.55);
+    for (let y = 1; y < height - 1; y++) {
+      tiles[y][chasmX].type = 'water';
+      tiles[y][chasmX].blocksMovement = true;
+      tiles[y][chasmX].label = 'Fenda de Enxofre';
+    }
+
+    // Pontes naturais de rocha sobre a fenda
+    const bridgeY1 = Math.floor(height * 0.35);
+    const bridgeY2 = Math.floor(height * 0.7);
+    [bridgeY1, bridgeY2].forEach((by) => {
+      if (by < height) {
+        tiles[by][chasmX].type = 'bridge';
+        tiles[by][chasmX].blocksMovement = false;
+        tiles[by][chasmX].label = 'Ponte Natural de Rocha';
+      }
+    });
+
+    // Monólito de aviso dracônico
+    const shrineX = Math.min(width - 2, chasmX + 2);
+    const shrineY = Math.floor(height * 0.3);
+    tiles[shrineY][shrineX].type = 'shrine';
+    interactables.push({
+      x: shrineX,
+      y: shrineY,
+      type: 'shrine',
+      name: 'Monólito das Chamas Dracônicas',
+      description: 'Pilar de basalto gravado com asas e garras, emanando calor intenso da crista da montanha.'
+    });
+
+    // Ninho de brasas / baú
+    const nestX = width - 2;
+    const nestY = height - 3;
+    tiles[nestY][nestX].type = 'chest';
+    interactables.push({
+      x: nestX,
+      y: nestY,
+      type: 'chest',
+      name: 'Ninho de Brasas do Wyrmling',
+      description: 'Ninho rochoso contendo oferendas roubadas, relíquias calcinadas e escamas brilhantes.'
+    });
+
+    // Escadas para a cratera vulcânica
+    const stairsX = width - 2;
+    const stairsY = 2;
+    tiles[stairsY][stairsX].type = 'stairs';
+    interactables.push({
+      x: stairsX,
+      y: stairsY,
+      type: 'stairs',
+      name: 'Subida da Cratera Vulcânica',
+      description: 'Caminho sinuoso e íngreme conduzindo diretamente ao covil do Dragão.'
+    });
+
+    const midY = Math.floor(height / 2);
+    return {
+      id: `map-canyon-${customSeed}`,
+      name: 'Desfiladeiro da Fenda Escarpada',
+      biome: 'canyon',
+      width,
+      height,
+      tiles,
+      description: 'Paredões de basalto escuro com fendas de enxofre ardente. Pontes de pedra estreitas e ninhos de wyrmlings onde patrulhas espreitam.',
+      spawnHero: { x: 1, y: midY },
+      spawnEnemy: { x: shrineX, y: shrineY + 1 },
+      interactables,
+      seed: customSeed
+    };
+  } else {
+    // -------------------------------------------------------------
+    // BIOMA 6: O COVIL DE IGNISRAX (Cratera Magmática & Arena do Dragão)
+    // -------------------------------------------------------------
+    initGrid('building_floor');
+
+    // Paredes da câmara vulcânica
+    for (let x = 0; x < width; x++) {
+      tiles[0][x].type = 'building_wall';
+      tiles[0][x].blocksMovement = true;
+      tiles[0][x].blocksSight = true;
+      tiles[height - 1][x].type = 'building_wall';
+      tiles[height - 1][x].blocksMovement = true;
+      tiles[height - 1][x].blocksSight = true;
+    }
+    for (let y = 0; y < height; y++) {
+      tiles[y][0].type = 'building_wall';
+      tiles[y][0].blocksMovement = true;
+      tiles[y][0].blocksSight = true;
+      tiles[y][width - 1].type = 'building_wall';
+      tiles[y][width - 1].blocksMovement = true;
+      tiles[y][width - 1].blocksSight = true;
+    }
+
+    // 4 Pilares maciços de basalto para cobertura tática
+    const colX1 = Math.floor(width * 0.3);
+    const colX2 = Math.floor(width * 0.7);
+    const colY1 = Math.floor(height * 0.3);
+    const colY2 = Math.floor(height * 0.7);
+    [
+      { x: colX1, y: colY1 },
+      { x: colX2, y: colY1 },
+      { x: colX1, y: colY2 },
+      { x: colX2, y: colY2 }
+    ].forEach((p) => {
+      tiles[p.y][p.x].type = 'pillar';
+      tiles[p.y][p.x].blocksMovement = true;
+      tiles[p.y][p.x].blocksSight = true;
+      tiles[p.y][p.x].label = 'Pilar de Basalto';
+    });
+
+    // Fendas de magma
+    for (let y = 2; y < height - 2; y++) {
+      if (y % 2 === 0) {
+        const mx = Math.floor(width * 0.5);
+        tiles[y][mx].type = 'water';
+        tiles[y][mx].blocksMovement = true;
+        tiles[y][mx].label = 'Fenda de Magma';
+      }
+    }
+
+    // Plataforma do Tesouro / Trono de Ignisrax
+    const bossPlatformX = Math.floor(width * 0.75);
+    const bossPlatformY = Math.floor(height / 2);
+    tiles[bossPlatformY][bossPlatformX].type = 'shrine';
+    interactables.push({
+      x: bossPlatformX,
+      y: bossPlatformY,
+      type: 'shrine',
+      name: 'Monte de Ouro e Cinzas de Ignisrax',
+      description: 'Uma montanha cintilante de moedas de ouro antigas, armaduras calcinadas e pedras preciosas aquecidas pelo sopro do Dragão.'
+    });
+
+    // Baú lendário do dragão
+    const chestY = bossPlatformY + 2 < height - 1 ? bossPlatformY + 2 : bossPlatformY - 2;
+    tiles[chestY][bossPlatformX].type = 'chest';
+    interactables.push({
+      x: bossPlatformX,
+      y: chestY,
+      type: 'chest',
+      name: 'Arca Primordial de Valdoria',
+      description: 'Baú lendário de ferro negro selado com runas protetoras, guardado no centro do covil.'
+    });
+
+    // Escadaria de saída / retorno
+    const midY = Math.floor(height / 2);
+    tiles[midY][1].type = 'stairs';
+    interactables.push({
+      x: 1,
+      y: midY,
+      type: 'stairs',
+      name: 'Passagem para o Desfiladeiro',
+      description: 'Túnel estreito de rocha que conduz de volta à encosta do desfiladeiro.'
+    });
+
+    return {
+      id: `map-lair-${customSeed}`,
+      name: 'O Covil de Ignisrax • Cratera Magmática',
+      biome: 'lair',
+      width,
+      height,
+      tiles,
+      description: 'A colossal câmara vulcânica do Dragão Vermelho. Pilares de basalto oferecem proteção tática contra o sopro de fogo enquanto fendas de magma iluminam o covil.',
+      spawnHero: { x: 2, y: midY },
+      spawnEnemy: { x: bossPlatformX, y: bossPlatformY },
+      interactables,
+      seed: customSeed
+    };
   }
 
   function rmW(rm: { w: number }) {
     return Math.max(1, rm.w);
   }
 }
+

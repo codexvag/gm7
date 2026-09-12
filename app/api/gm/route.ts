@@ -23,7 +23,7 @@ async function resolveGroqKey(rawKey?: string): Promise<string> {
 
   // 2. Cloudflare Workers module environment
   try {
-    const mod = (await import('cloudflare:workers')) as { env?: Record<string, string> };
+    const mod = (await import('cloudflare:workers')) as unknown as { env?: Record<string, string> };
     const cfVal = mod.env?.GROQ_API_KEY || mod.env?.groq_api_key;
     if (cfVal && typeof cfVal === 'string' && cfVal.trim()) return cfVal.trim();
   } catch {}

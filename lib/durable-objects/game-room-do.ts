@@ -186,10 +186,10 @@ export class GameRoomDurableObject {
         this.onMessage(ws, raw);
       });
       ws.addEventListener('close', () => {
-        this.sockets.delete(ws);
+        this.handleSocketDisconnect(ws);
       });
       ws.addEventListener('error', () => {
-        this.sockets.delete(ws);
+        this.handleSocketDisconnect(ws);
       });
     } else if (typeof ws.on === 'function') {
       // Node.js ws compatibility
@@ -197,11 +197,71 @@ export class GameRoomDurableObject {
         this.onMessage(ws, data.toString());
       });
       ws.on('close', () => {
-        this.sockets.delete(ws);
+        this.handleSocketDisconnect(ws);
       });
       ws.on('error', () => {
-        this.sockets.delete(ws);
+        this.handleSocketDisconnect(ws);
       });
+    }
+  }
+
+  /**
+   * Handle socket disconnection authoritatively:
+   * Cleans up socket, purges avatar from room if no other socket is active for that hero,
+   * broadcasts PLAYER_LEFT to all remaining players and syncs DB.
+   */
+  public handleSocketDisconnect(ws: any): void {
+    const meta = this.sockets.get(ws);
+    this.sockets.delete(ws);
+    if (!meta) return;
+
+    const charId = meta.characterId;
+    const userId = meta.userId;
+
+    // Check if another active socket in this room is still using this characterId
+    let hasOtherSocket = false;
+    if (charId) {
+      for (const [_, otherMeta] of Array.from(this.sockets.entries())) {
+        if (otherMeta.characterId === charId) {
+          hasOtherSocket = true;
+          break;
+        }
+      }
+    }
+
+    if (charId && !hasOtherSocket) {
+      const initialCount = this.state.characters.length;
+      this.state.characters = this.state.characters.filter((c) => c.id !== charId);
+
+      if (this.state.characters.length !== initialCount) {
+        this.seq++;
+        this.version++;
+        this.state.updatedAt = Date.now();
+
+        // 1. Broadcast explicit PLAYER_LEFT so all connected clients immediately despawn avatar
+        this.broadcast({
+          type: 'PLAYER_LEFT',
+          roomId: this.roomId,
+          characterId: charId,
+          userId,
+          reason: 'disconnected',
+          state: this.state,
+          version: this.version,
+          seq: this.seq
+        });
+
+        // 2. Broadcast authoritative SYNC_SNAPSHOT to keep state fully consistent
+        this.broadcast({
+          type: 'SYNC_SNAPSHOT',
+          roomId: this.roomId,
+          state: this.state,
+          version: this.version,
+          seq: this.seq
+        });
+
+        // 3. Persist updated characters to database (debounced)
+        this.scheduleDebouncedSave();
+      }
     }
   }
 
@@ -217,7 +277,9 @@ export class GameRoomDurableObject {
         case 'JOIN_ROOM': {
           if (meta) {
             meta.userId = msg.userId || meta.userId;
-            meta.characterId = msg.characterId || meta.characterId;
+            if (msg.characterId) {
+              meta.characterId = msg.characterId;
+            }
           }
           await this.syncWithDatabase();
           this.send(ws, {
@@ -228,8 +290,7 @@ export class GameRoomDurableObject {
             seq: this.seq,
             serverTime: Date.now()
           });
-          
-          // Fix: Broadcast SYNC_SNAPSHOT to ALL other players so they immediately see the new player
+
           this.broadcast({
             type: 'SYNC_SNAPSHOT',
             roomId: this.roomId,
@@ -237,6 +298,81 @@ export class GameRoomDurableObject {
             version: this.version,
             seq: this.seq
           });
+          break;
+        }
+
+        case 'PLAYER_JOIN': {
+          if (meta) {
+            meta.userId = msg.userId || meta.userId;
+            meta.characterId = msg.character.id;
+          }
+          touchChar(msg.character);
+
+          const existingIdx = this.state.characters.findIndex((c) => c.id === msg.character.id);
+          if (existingIdx >= 0) {
+            this.state.characters[existingIdx] = {
+              ...this.state.characters[existingIdx],
+              ...msg.character,
+              updatedAt: Date.now()
+            };
+          } else {
+            this.state.characters.push({
+              ...msg.character,
+              updatedAt: Date.now()
+            });
+          }
+
+          this.seq++;
+          this.version++;
+          this.state.updatedAt = Date.now();
+
+          // Broadcast to everyone that this player joined / spawned
+          this.broadcast({
+            type: 'PLAYER_JOINED',
+            roomId: this.roomId,
+            character: msg.character,
+            state: this.state,
+            version: this.version,
+            seq: this.seq
+          });
+
+          // Also reply to connecting client with authoritative init snapshot
+          this.send(ws, {
+            type: 'INIT_SNAPSHOT',
+            roomId: this.roomId,
+            state: this.state,
+            version: this.version,
+            seq: this.seq,
+            serverTime: Date.now()
+          });
+
+          this.scheduleDebouncedSave();
+          break;
+        }
+
+        case 'PLAYER_LEAVE': {
+          const charId = msg.characterId || meta?.characterId;
+          if (charId) {
+            if (meta && meta.characterId === charId) {
+              meta.characterId = undefined;
+            }
+            this.state.characters = this.state.characters.filter((c) => c.id !== charId);
+            this.seq++;
+            this.version++;
+            this.state.updatedAt = Date.now();
+
+            this.broadcast({
+              type: 'PLAYER_LEFT',
+              roomId: this.roomId,
+              characterId: charId,
+              userId: msg.userId || meta?.userId,
+              reason: 'left',
+              state: this.state,
+              version: this.version,
+              seq: this.seq
+            });
+            this.scheduleDebouncedSave();
+          }
           break;
         }
 
@@ -340,6 +476,10 @@ export class GameRoomDurableObject {
         spellAbility: 0,
         slots: [0, 0, 0, 0, 0],
         usedSlots: [0, 0, 0, 0, 0],
+        stats: [15, 14, 13, 12, 10, 8],
+        skills: [],
+        expertise: [],
+        saves: [],
         features: '',
         spells: '',
         inventory: 'pocao-cura:2',
@@ -403,6 +543,8 @@ export class GameRoomDurableObject {
     // Apply movement authoritatively in live RAM (<0.01ms)
     char.x = validation.finalPos.x;
     char.y = validation.finalPos.y;
+    touchChar(char);
+    this.state.updatedAt = Date.now();
 
     if (this.state.combat) {
       this.state.movementUsed = (this.state.movementUsed || 0) + validation.distance;
@@ -427,7 +569,13 @@ export class GameRoomDurableObject {
       version: this.version,
       state: this.state,
       originUserId: meta?.userId,
-      actionType: 'move'
+      actionType: 'move',
+      actionPayload: {
+        characterId: char.id,
+        waypoints: validation.validatedWaypoints,
+        finalPos: validation.finalPos,
+        seq: this.seq
+      }
     });
 
     // Schedule debounced database persistence (500ms) without blocking the thread
@@ -499,6 +647,9 @@ export class GameRoomDurableObject {
 
     // Append narrative log
     this.state.logs.push(entry(attackResult.text, 'roll'));
+    touchChar(actor);
+    touchChar(target);
+    this.state.updatedAt = Date.now();
 
     this.seq++;
     this.version++;
@@ -532,13 +683,13 @@ export class GameRoomDurableObject {
    */
   public broadcast(msg: WsServerMessage): void {
     const payload = JSON.stringify(msg);
-    for (const [socket] of this.sockets.entries()) {
+    for (const [socket] of Array.from(this.sockets.entries())) {
       try {
         if (socket.readyState === 1 || socket.readyState === undefined) {
           socket.send(payload);
         }
       } catch {
-        this.sockets.delete(socket);
+        this.handleSocketDisconnect(socket);
       }
     }
   }
@@ -552,7 +703,7 @@ export class GameRoomDurableObject {
         socket.send(JSON.stringify(msg));
       }
     } catch {
-      this.sockets.delete(socket);
+      this.handleSocketDisconnect(socket);
     }
   }
 

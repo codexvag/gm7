@@ -29,7 +29,7 @@ import {
 import type { Character, Enemy } from '@/lib/game-engine';
 import type { ActionSelection } from './bottom-player-hud';
 import type { ProceduralDungeon, TileType } from '@/lib/dungeon-generator';
-import type { Battlemap, OrganicTileType } from '@/lib/battlemap-biomes';
+import type { Battlemap, OrganicTileType, BiomeType } from '@/lib/battlemap-biomes';
 import {
   MAP_COLLISION_PROFILES,
   isGridTileWalkable,
@@ -126,7 +126,7 @@ interface TacticalMapProps {
   onTalkNpc?: (npcId: string) => void;
   projectiles?: ProjectileVfx[];
   movementUsed?: number;
-  biome?: 'village' | 'forest' | 'dungeon';
+  biome?: BiomeType;
   onInteractPlayer?: (hero: Character) => void;
 }
 
@@ -232,10 +232,20 @@ export function TacticalMap({
   const [customZonesLoaded, setCustomZonesLoaded] = useState<boolean>(false);
 
   // Determine current active biome
-  const currentBiome: 'village' | 'forest' | 'dungeon' =
+  const currentBiome: BiomeType =
     biome ||
     (battlemap?.biome as any) ||
-    (locationName.toLowerCase().includes('floresta') ? 'forest' : locationName.toLowerCase().includes('dungeon') || locationName.toLowerCase().includes('catacumba') ? 'dungeon' : 'village');
+    (locationName.toLowerCase().includes('floresta')
+      ? 'forest'
+      : locationName.toLowerCase().includes('ruina') || locationName.toLowerCase().includes('abadia')
+      ? 'ruins'
+      : locationName.toLowerCase().includes('canyon') || locationName.toLowerCase().includes('fenda') || locationName.toLowerCase().includes('desfiladeiro')
+      ? 'canyon'
+      : locationName.toLowerCase().includes('covil') || locationName.toLowerCase().includes('cratera')
+      ? 'lair'
+      : locationName.toLowerCase().includes('dungeon') || locationName.toLowerCase().includes('catacumba')
+      ? 'dungeon'
+      : 'village');
 
   const collisionProfile = MAP_COLLISION_PROFILES[currentBiome] || MAP_COLLISION_PROFILES.village;
   const gridSize = customGridSize || collisionProfile.gridSize || (battlemap ? battlemap.width : dungeon ? dungeon.width : 8);
@@ -365,8 +375,8 @@ export function TacticalMap({
   const displayHeroes = useMemo(() => {
     return characters.map((c) => {
       const walk = walkingHeroes[c.id];
-      if (walk) {
-        return { ...c, x: walk.x, y: walk.y, isWalking: Boolean(walk.isWalking) } as Character & { isWalking?: boolean };
+      if (walk && walk.isWalking) {
+        return { ...c, x: walk.x, y: walk.y, isWalking: true } as Character & { isWalking?: boolean };
       }
       return { ...c, isWalking: false } as Character & { isWalking?: boolean };
     });
@@ -403,26 +413,36 @@ export function TacticalMap({
           delete walkTimersRef.current[heroId];
         }
         const finalDest = path[path.length - 1];
-        // RETAIN final destination in state so token NEVER rubberbands back
-        setWalkingHeroes((prev) => ({
-          ...prev,
-          [heroId]: { x: finalDest.x, y: finalDest.y, isWalking: false }
-        }));
         if (isLocalInitiator) {
           onMoveHero(heroId, finalDest.x, finalDest.y);
         }
+        // Clean up walkingHeroes cache so the token position is governed purely by characters state
+        setWalkingHeroes((prev) => {
+          const next = { ...prev };
+          delete next[heroId];
+          return next;
+        });
       }
     }, stepInterval);
   };
 
   // Sync remote player walks received via WebSocket Durable Object
   useEffect(() => {
-    if (remoteWalkPath && remoteWalkPath.waypoints && remoteWalkPath.waypoints.length > 1) {
+    if (remoteWalkPath && remoteWalkPath.waypoints && remoteWalkPath.waypoints.length > 0) {
       if (remoteWalkPath.seq !== lastRemoteSeqRef.current) {
         lastRemoteSeqRef.current = remoteWalkPath.seq;
-        const isCurrentHeroWalking = walkingHeroes[remoteWalkPath.characterId]?.isWalking;
-        if (!isCurrentHeroWalking) {
-          animateHeroPath(remoteWalkPath.characterId, remoteWalkPath.waypoints, false);
+        if (remoteWalkPath.waypoints.length > 1) {
+          const isCurrentHeroWalking = walkingHeroes[remoteWalkPath.characterId]?.isWalking;
+          if (!isCurrentHeroWalking) {
+            animateHeroPath(remoteWalkPath.characterId, remoteWalkPath.waypoints, false);
+          }
+        } else {
+          // Single square step: clean up any stale walk cache so token reflects final coordinates
+          setWalkingHeroes((prev) => {
+            const next = { ...prev };
+            delete next[remoteWalkPath.characterId];
+            return next;
+          });
         }
       }
     }

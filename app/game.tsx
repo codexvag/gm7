@@ -64,9 +64,9 @@ import {
   type Enemy,
   type WsServerMessage
 } from '@/lib/game-engine';
+
 import type { Point } from '@/lib/collision-system';
 import { GM_PROMPT } from '@/lib/gm-prompt';
-
 // New CRPG Digital Video Game Components
 import { FloatingTextOverlay, type FloatingNumber } from '@/components/game/floating-text';
 import { DiceRoller3D, type DiceRollEvent } from '@/components/game/dice-roller-3d';
@@ -89,6 +89,8 @@ import { PartySidebar } from '@/components/game/party-sidebar';
 import { InitiativeRibbon } from '@/components/game/initiative-ribbon';
 import { GamemasterSidebar } from '@/components/game/gamemaster-sidebar';
 import { LevelUpModal } from '@/components/game/level-up-modal';
+import { MICRO_ADVENTURES, startMicroAdventure, completeMicroAdventure } from '@/lib/micro-adventures';
+import { spawnDragonBoss, getDragonCombatPhase, executeDragonBreath } from '@/lib/dragon-encounter';
 
 type ApiData = {
   error: string;
@@ -161,6 +163,14 @@ function createInitialRoom(): Room {
   };
 }
 
+const playCombatSound = (type: 'hit' | 'crit' | 'miss') => {
+  try {
+    const audio = new Audio(`/sounds/${type}.mp3`);
+    audio.volume = type === 'crit' ? 0.6 : 0.4;
+    audio.play().catch(() => {});
+  } catch (e) {}
+};
+
 export default function Game() {
   const [view, setView] = useState('Aventura');
   const [room, setRoom] = useState<Room | null>(() => createInitialRoom());
@@ -189,6 +199,7 @@ export default function Game() {
 
   // Digital Video Game States
   const [floatingTexts, setFloatingTexts] = useState<FloatingNumber[]>([]);
+  const [hitStopType, setHitStopType] = useState<'normal' | 'crit' | null>(null);
   const [currentDiceRoll, setCurrentDiceRoll] = useState<DiceRollEvent | null>(null);
   const [targetingAction, setTargetingAction] = useState<ActionSelection | null>(null);
   const [showInventory, setShowInventory] = useState(false);
@@ -216,6 +227,8 @@ export default function Game() {
   const wsRef = React.useRef<WebSocket | null>(null);
   const clientSeqRef = React.useRef<number>(1);
   const isWsConnectedRef = React.useRef<boolean>(false);
+  const isSseConnectedRef = React.useRef<boolean>(false);
+  const isSyncFetchingRef = React.useRef<boolean>(false);
   const [remoteWalkPath, setRemoteWalkPath] = useState<{ characterId: string; waypoints: Point[]; seq: number } | null>(null);
   const [showPartySidebar, setShowPartySidebar] = useState(true);
   const [showGmSidebar, setShowGmSidebar] = useState(false);
@@ -225,6 +238,7 @@ export default function Game() {
     projectile: ProjectileVfx;
     floatingText: FloatingNumber;
     narrateCtx: string;
+    shouldNarrate?: boolean;
   } | null>(null);
   const [isBottomHudMinimized, setIsBottomHudMinimized] = useState(false);
   const [currentAct, setCurrentAct] = useState<1 | 2 | 3>(1);
@@ -275,15 +289,15 @@ export default function Game() {
   const applyProtectedRoomState = useCallback((newRoom: Room) => {
     setRoom((prev) => {
       if (!prev) return newRoom;
-      if (newRoom.version < prev.version) return prev; // Do not apply older snapshot
 
       const now = Date.now();
-      const incomingChars = newRoom.state?.characters || [];
-      const charsToUse = (incomingChars.length === 0 && (prev.state?.characters?.length || 0) > 0)
-        ? prev.state.characters
-        : incomingChars;
+      const incomingChars: Character[] = newRoom.state?.characters || [];
+      const prevChars = prev.state?.characters || [];
 
-      const protectedChars = charsToUse.map((char: Character) => {
+      // Authoritative active character list from server, protected against optimistic rollback
+      // for the local player's recent movements
+      const activeCharIds = new Set(incomingChars.map((c) => c.id));
+      const protectedChars = incomingChars.map((char: Character) => {
         const shield = localMoveShieldRef.current[char.id];
         if (shield && now - shield.time < 2000) {
           if (char.x === shield.x && char.y === shield.y) {
@@ -295,15 +309,38 @@ export default function Game() {
         return char;
       });
 
-      const safeRoom: Room = {
+      // Preserve newly created / optimistic hero locally only if currently under an active rollback shield
+      for (const c of prevChars) {
+        if (!activeCharIds.has(c.id)) {
+          const shield = localMoveShieldRef.current[c.id];
+          if (shield && now - shield.time < 2000) {
+            protectedChars.push({ ...c, x: shield.x, y: shield.y });
+          }
+        }
+      }
+
+      // Merge enemies the same way (keeps remote casters + boss in sync non-destructively)
+      const prevEnemies = prev.state?.enemies || [];
+      const incomingEnemies = newRoom.state?.enemies || [];
+      const enemyById = new Map<string, Enemy>();
+      for (const e of prevEnemies) enemyById.set(e.id, e);
+      for (const e of incomingEnemies) {
+        const existing = enemyById.get(e.id);
+        if (!existing || (e.updatedAt ?? 0) >= (existing.updatedAt ?? 0)) enemyById.set(e.id, e);
+      }
+
+      const protectedRoom: Room = {
         ...newRoom,
+        version: Math.max(prev.version, newRoom.version),
         state: {
+          ...prev.state,
           ...newRoom.state,
-          characters: protectedChars
+          characters: protectedChars,
+          enemies: [...enemyById.values()].sort((a, b) => a.initiative - b.initiative)
         }
       };
-      roomRef.current = safeRoom;
-      return safeRoom;
+      roomRef.current = protectedRoom;
+      return protectedRoom;
     });
   }, []);
 
@@ -397,6 +434,7 @@ export default function Game() {
     let ws: WebSocket | null = null;
     let reconnectTimeout: NodeJS.Timeout | null = null;
     let fallbackPollingTimer: NodeJS.Timeout | null = null;
+    let pingInterval: NodeJS.Timeout | null = null;
     let bc: BroadcastChannel | null = null;
     let isDisposed = false;
 
@@ -432,7 +470,93 @@ export default function Game() {
       // BroadcastChannel fallback
     }
 
-    // 2. Cloudflare Native WebSocket + Durable Objects Transport
+    // 2. Fallback Polling Loop (Sub-second 400ms when disconnected from Push)
+    const ensureFallbackPolling = () => {
+      if (isDisposed || fallbackPollingTimer) return;
+      fallbackPollingTimer = setInterval(() => {
+        if (!isDisposed && !isSyncFetchingRef.current && !isWsConnectedRef.current && !isSseConnectedRef.current) {
+          isSyncFetchingRef.current = true;
+          void load(roomId).finally(() => {
+            isSyncFetchingRef.current = false;
+          });
+        }
+      }, 400);
+    };
+
+    // 3. Server-Sent Events (SSE) Push Transport (100% Cloud-Host Resilient Real-Time Push)
+    let es: EventSource | null = null;
+    let sseReconnectTimeout: NodeJS.Timeout | null = null;
+
+    const connectSse = () => {
+      if (isDisposed) return;
+      try {
+        const sseUrl = `/api/game/stream?room=${encodeURIComponent(roomId)}`;
+        es = new EventSource(sseUrl);
+
+        es.onopen = () => {
+          if (isDisposed) {
+            es?.close();
+            return;
+          }
+          isSseConnectedRef.current = true;
+          if (fallbackPollingTimer) {
+            clearInterval(fallbackPollingTimer);
+            fallbackPollingTimer = null;
+          }
+        };
+
+        es.addEventListener('update', (event) => {
+          if (isDisposed) return;
+          try {
+            const data = JSON.parse(event.data);
+            // 1. Smooth remote hero walk interpolation
+            if (data.actionType === 'move' && data.actionPayload?.characterId) {
+              const payload = data.actionPayload;
+              if (payload.characterId !== selected) {
+                setRemoteWalkPath({
+                  characterId: payload.characterId,
+                  waypoints: payload.waypoints || [{ x: payload.x, y: payload.y }],
+                  seq: payload.seq || ++clientSeqRef.current
+                });
+              }
+            }
+
+            // 2. Authoritative protected state sync
+            if (data.state) {
+              const snapRoom: Room = {
+                id: roomId,
+                owner: roomRef.current?.owner || '',
+                name: roomRef.current?.name || '',
+                code: roomRef.current?.code || '',
+                version: data.version,
+                state: data.state
+              };
+              applyProtectedRoomState(snapRoom);
+            }
+          } catch (err) {
+            console.warn('SSE payload notice:', err);
+          }
+        });
+
+        es.onerror = () => {
+          isSseConnectedRef.current = false;
+          es?.close();
+          es = null;
+          if (isDisposed) return;
+          if (!isWsConnectedRef.current) {
+            ensureFallbackPolling();
+          }
+          if (sseReconnectTimeout) clearTimeout(sseReconnectTimeout);
+          sseReconnectTimeout = setTimeout(connectSse, 2500);
+        };
+      } catch (err) {
+        console.warn('SSE stream init notice:', err);
+      }
+    };
+
+    connectSse();
+
+    // 4. Cloudflare Native WebSocket + Durable Objects Transport
     const connectWs = () => {
       if (isDisposed) return;
       try {
@@ -453,6 +577,14 @@ export default function Game() {
             fallbackPollingTimer = null;
           }
 
+          // Start 15s keep-alive heartbeat ping
+          if (pingInterval) clearInterval(pingInterval);
+          pingInterval = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'PING', timestamp: Date.now() }));
+            }
+          }, 15000);
+
           ws?.send(
             JSON.stringify({
               type: 'JOIN_ROOM',
@@ -461,6 +593,19 @@ export default function Game() {
               characterId: selected
             })
           );
+
+          // If hero is already selected in current room state, announce presence immediately
+          const activeHero = roomRef.current?.state?.characters?.find((c) => c.id === selected);
+          if (activeHero) {
+            ws?.send(
+              JSON.stringify({
+                type: 'PLAYER_JOIN',
+                roomId,
+                userId: user || 'anon',
+                character: activeHero
+              })
+            );
+          }
         };
 
         ws.onmessage = (event) => {
@@ -482,6 +627,45 @@ export default function Game() {
                 break;
               }
 
+              case 'PLAYER_JOINED': {
+                // Immediately spawn the joined hero in local state without page refresh
+                setRoom((prev) => {
+                  if (!prev) return prev;
+                  const charById = new Map<string, Character>();
+                  for (const c of prev.state.characters) charById.set(c.id, c);
+                  charById.set(msg.character.id, msg.character);
+                  const updatedRoom: Room = {
+                    ...prev,
+                    version: Math.max(prev.version, msg.version),
+                    state: {
+                      ...prev.state,
+                      characters: Array.from(charById.values())
+                    }
+                  };
+                  roomRef.current = updatedRoom;
+                  return updatedRoom;
+                });
+                break;
+              }
+
+              case 'PLAYER_LEFT': {
+                // Immediately despawn the disconnected/left hero
+                setRoom((prev) => {
+                  if (!prev) return prev;
+                  const updatedRoom: Room = {
+                    ...prev,
+                    version: Math.max(prev.version, msg.version),
+                    state: {
+                      ...prev.state,
+                      characters: prev.state.characters.filter((c) => c.id !== msg.characterId)
+                    }
+                  };
+                  roomRef.current = updatedRoom;
+                  return updatedRoom;
+                });
+                break;
+              }
+
               case 'HERO_MOVED': {
                 // Trigger smooth 340ms waypoint walking animation with token sway
                 setRemoteWalkPath({
@@ -495,13 +679,13 @@ export default function Game() {
                   // Se o personagem não existe no nosso estado, isso significa que perdemos um SYNC_SNAPSHOT.
                   // Precisamos forçar o carregamento do banco de dados para puxar sua ficha completa.
                   if (!prev.state.characters.some(c => c.id === msg.characterId)) {
-                    if (!busy) void load(roomId);
+                    void load(roomId);
                     return prev;
                   }
                   
                   return {
                     ...prev,
-                    version: Math.max(prev.version, msg.seq),
+                    version: prev.version,
                     state: {
                       ...prev.state,
                       characters: prev.state.characters.map((c) =>
@@ -568,6 +752,15 @@ export default function Game() {
                     type: msg.attackResult.isCrit ? 'crit' : msg.attackResult.hit ? 'damage' : 'miss'
                   };
                   setFloatingTexts((prev) => [...prev, newFloat]);
+                  
+                  if (newFloat.type === 'crit' || newFloat.type === 'damage') {
+                    setHitStopType(newFloat.type === 'crit' ? 'crit' : 'normal');
+                    playCombatSound(newFloat.type === 'crit' ? 'crit' : 'hit');
+                    setTimeout(() => setHitStopType(null), newFloat.type === 'crit' ? 300 : 150);
+                  } else if (newFloat.type === 'miss') {
+                    playCombatSound('miss');
+                  }
+
                   setTimeout(() => {
                     setFloatingTexts((prev) => prev.filter((f) => f.id !== newFloat.id));
                   }, 1600);
@@ -615,14 +808,14 @@ export default function Game() {
 
         ws.onclose = () => {
           isWsConnectedRef.current = false;
-          if (isDisposed) return;
-          // If WS disconnected, temporarily poll while reconnecting
-          if (!fallbackPollingTimer) {
-            fallbackPollingTimer = setInterval(() => {
-              if (!busy) void load(roomId);
-            }, 3000);
+          if (pingInterval) {
+            clearInterval(pingInterval);
+            pingInterval = null;
           }
-          // Exponential / delayed reconnection
+          if (isDisposed) return;
+          if (!isSseConnectedRef.current) {
+            ensureFallbackPolling();
+          }
           reconnectTimeout = setTimeout(connectWs, 2000);
         };
 
@@ -638,8 +831,13 @@ export default function Game() {
 
     return () => {
       isDisposed = true;
+      if (pingInterval) clearInterval(pingInterval);
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (sseReconnectTimeout) clearTimeout(sseReconnectTimeout);
       if (fallbackPollingTimer) clearInterval(fallbackPollingTimer);
+      if (es) {
+        es.close();
+      }
       if (ws) {
         ws.close();
         if (wsRef.current === ws) wsRef.current = null;
@@ -651,7 +849,23 @@ export default function Game() {
         }
       }
     };
-  }, [room?.id, applyProtectedRoomState, busy, load, user, selected, battlemapBiome, dungeonSize]);
+  }, [room?.id, applyProtectedRoomState, load, user, selected, battlemapBiome, dungeonSize]);
+
+  // Synchronize active hero selection with room WebSocket so all other players immediately see this avatar
+  useEffect(() => {
+    if (!selected || !room?.id) return;
+    const hero = room.state?.characters?.find((c) => c.id === selected);
+    if (hero && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'PLAYER_JOIN',
+          roomId: room.id,
+          userId: user || 'anon',
+          character: hero
+        })
+      );
+    }
+  }, [selected, room?.id, user, room?.state?.characters]);
 
   // General server action dispatch with queue to eliminate lag and prevent dropping fast clicks
   async function action(a: Record<string, unknown>) {
@@ -776,13 +990,24 @@ export default function Game() {
       // Show floating combat text after a tiny delay (impact moment)
       setTimeout(() => {
         setFloatingTexts((prev) => [...prev, pending.floatingText]);
+        
+        if (pending.floatingText.type === 'crit' || pending.floatingText.type === 'damage') {
+          setHitStopType(pending.floatingText.type === 'crit' ? 'crit' : 'normal');
+          playCombatSound(pending.floatingText.type === 'crit' ? 'crit' : 'hit');
+          setTimeout(() => setHitStopType(null), pending.floatingText.type === 'crit' ? 300 : 150);
+        } else if (pending.floatingText.type === 'miss') {
+          playCombatSound('miss');
+        }
+
         setTimeout(() => {
           setFloatingTexts((prev) => prev.filter((f) => f.id !== pending.floatingText.id));
         }, 1600);
       }, 300);
 
-      // Narrate the cinematic outcome
-      void narrate('', pending.narrateCtx);
+      // Narrate ONLY on critical hits or lethal boss/elite kills (selective AI director)
+      if (pending.shouldNarrate && pending.narrateCtx) {
+        void narrate('', pending.narrateCtx);
+      }
     }
   }, []);
 
@@ -867,11 +1092,33 @@ export default function Game() {
         type: r.isCrit ? 'crit' : r.hit ? 'damage' : 'miss'
       };
 
+      // Selective AI narration trigger (only on crits or boss/elite fatal blows)
+      const isBossOrElite =
+        target.maxHp >= 20 ||
+        target.name.includes('Ignisrax') ||
+        target.name.includes('Boss') ||
+        target.name.includes('Sentinela') ||
+        target.name.includes('Lorde') ||
+        target.name.includes('Wyrmling') ||
+        target.name.includes('Guardião') ||
+        target.name.includes('Alfa');
+      const isFatal = r.hpAfter <= 0;
+      const shouldNarrate = r.isCrit || (isFatal && isBossOrElite);
+
+      const narrateMessage = shouldNarrate
+        ? (r.isCrit && isFatal
+            ? `GOLPE CRÍTICO FATAL! ${active.name} desferiu um acerto devastador que eliminou ${target.name} com ${r.damage} de dano!`
+            : r.isCrit
+            ? `GOLPE CRÍTICO! ${active.name} acerta um ponto vital em ${target.name} causando ${r.damage} de dano estrondoso!`
+            : `VITÓRIA CONTRA O CHEFE! O inimigo temível ${target.name} tombou diante de ${active.name}!`)
+        : '';
+
       // Queue VFX to fire when dice roll dismisses
       pendingVfxRef.current = {
         projectile: newProj,
         floatingText: newFloat,
-        narrateCtx: `Resultado mecânico: ${r.text}`
+        narrateCtx: narrateMessage,
+        shouldNarrate
       };
 
       // 2. Show Dice 3D Roll FIRST (fires VFX when it completes via handleDiceComplete)
@@ -1050,21 +1297,75 @@ export default function Game() {
   };
 
   const handleTravel = async (b: BiomeType) => {
-    const locIdx = b === 'village' ? 0 : b === 'forest' ? 1 : 2;
-    const destName = b === 'village' ? 'Vila do Rio Verde' : b === 'forest' ? 'A Floresta dos Sussurros' : 'Catacumbas dos Três Selos';
+    const locIdx =
+      b === 'village' ? 0
+      : b === 'forest' ? 1
+      : b === 'ruins' ? 2
+      : b === 'dungeon' ? 3
+      : b === 'canyon' ? 4
+      : 5;
+    const destName = locations[locIdx]?.name || 'Novo Território';
     const ok = await action({ action: 'location', location: locIdx, biome: b });
     if (ok) {
-      // Only update client biome AFTER server confirms the travel
       setBattlemapBiome(b);
       setBattlemapSeed(Date.now());
-      setCurrentAct((locIdx + 1) as 1 | 2 | 3);
+      setCurrentAct(Math.min(3, Math.max(1, locIdx >= 4 ? 3 : locIdx >= 2 ? 2 : 1)) as 1 | 2 | 3);
       void narrate('', `O grupo de heróis viajou para ${destName}. O ambiente ao redor se transforma.`);
     }
   };
 
+  const handleStartAdventure = async (advId: string) => {
+    if (!state) return;
+    const adv = MICRO_ADVENTURES[advId];
+    if (!adv) return;
+
+    const res = startMicroAdventure(state, advId);
+    if (res.success) {
+      const targetBiome: BiomeType =
+        adv.locationIndex === 0 ? 'village'
+        : adv.locationIndex === 1 ? 'forest'
+        : adv.locationIndex === 2 ? 'ruins'
+        : adv.locationIndex === 3 ? 'dungeon'
+        : adv.locationIndex === 4 ? 'canyon'
+        : 'lair';
+
+      await handleTravel(targetBiome);
+
+      // Spawn adventure stage enemies if present
+      const stage1 = adv.stages[1];
+      if (stage1?.spawnEnemies && stage1.spawnEnemies.length > 0) {
+        state.enemies = stage1.spawnEnemies.map((enemy) => ({
+          id: crypto.randomUUID(),
+          name: enemy.name,
+          hp: enemy.hp,
+          maxHp: enemy.maxHp,
+          ac: enemy.ac,
+          attack: enemy.attack,
+          damage: enemy.damage,
+          weapon: enemy.weapon,
+          initiative: 10,
+          x: enemy.x,
+          y: enemy.y
+        }));
+        state.combat = true;
+      }
+      await action({ action: 'notes', notes: state.notes });
+      void narrate('', res.log);
+    }
+  };
+
+  const handleChallengeDragon = async () => {
+    if (!state) return;
+    const { boss, log } = spawnDragonBoss(state);
+    setBattlemapBiome('lair');
+    setBattlemapSeed(Date.now());
+    await action({ action: 'location', location: 5, biome: 'lair' });
+    void narrate('', log);
+  };
+
   return (
     <SidebarProvider>
-      <main className="game-shell flex flex-col md:flex-row w-full h-[100dvh] max-h-[100dvh] bg-[#050814] text-[#ede9dc] select-none overflow-hidden">
+      <main className={`game-shell flex flex-col md:flex-row w-full h-[100dvh] max-h-[100dvh] bg-[#050814] text-[#ede9dc] select-none overflow-hidden ${hitStopType === 'crit' ? 'hit-stop-crit' : hitStopType === 'normal' ? 'hit-stop' : ''}`}>
         {/* Navigation Sidebar (Desktop - Apenas exibido fora da tela de Aventura) */}
         {view !== 'Aventura' && (
           <Sidebar collapsible="none" className="navigation hidden md:flex shrink-0 h-full overflow-y-auto">
@@ -1266,6 +1567,11 @@ export default function Game() {
               notes={state?.notes || ''}
               onSaveNotes={(n) => void action({ action: 'notes', notes: n })}
               isOwner={owner}
+              questProgress={state?.questProgress}
+              worldFlags={state?.worldFlags}
+              activeAdventureId={state?.activeMicroAdventureId}
+              onStartAdventure={handleStartAdventure}
+              onChallengeDragon={handleChallengeDragon}
             />
           )}
 
@@ -1300,6 +1606,20 @@ export default function Game() {
               setShowCharacterCreator(false);
               setSelected(newHero.id);
               setView('Aventura');
+
+              // 1. Instant WebSocket broadcast so other players spawn avatar in 0ms!
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(
+                  JSON.stringify({
+                    type: 'PLAYER_JOIN',
+                    roomId: room?.id || 'mmo-world-village',
+                    userId: user || 'anon',
+                    character: newHero
+                  })
+                );
+              }
+
+              // 2. Persist character via authoritative API action
               const res = await action({ action: 'character', value: newHero });
               const createdHero = res?.room?.state?.characters?.find((c: Character) => c.name === newHero.name) || res?.room?.state?.characters?.[0];
               const heroId = createdHero?.id || newHero.id;
@@ -1493,17 +1813,26 @@ export default function Game() {
                 {/* Right: Biome Selector & Mobile Tab Switcher */}
                 {/* Right: Biome Selector, HUD Toggles & Mobile Tab Switcher */}
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {/* Biome Selector */}
+                  {/* Biome Selector: Os 6 Mapas de Valdoria */}
                   <div className="hidden lg:flex items-center gap-0.5 bg-zinc-900 border border-[#384333]/80 rounded-xl p-0.5 text-[10px] font-bold">
-                    {(['village', 'forest', 'dungeon'] as const).map((b) => (
+                    {(
+                      [
+                        { id: 'village', label: 'Vila' },
+                        { id: 'forest', label: 'Mata' },
+                        { id: 'ruins', label: 'Ruínas' },
+                        { id: 'dungeon', label: 'Catacumbas' },
+                        { id: 'canyon', label: 'Fenda' },
+                        { id: 'lair', label: 'Covil 🌋' }
+                      ] as const
+                    ).map((b) => (
                       <button
-                        key={b}
-                        onClick={() => handleTravel(b)}
+                        key={b.id}
+                        onClick={() => handleTravel(b.id)}
                         className={`px-2 py-0.5 rounded-lg transition-colors ${
-                          battlemapBiome === b ? 'bg-amber-600/35 text-amber-200 font-black' : 'text-zinc-400 hover:text-white'
+                          battlemapBiome === b.id ? 'bg-amber-600/35 text-amber-200 font-black' : 'text-zinc-400 hover:text-white'
                         }`}
                       >
-                        {b === 'village' ? 'Vila' : b === 'forest' ? 'Mata' : 'Dungeon'}
+                        {b.label}
                       </button>
                     ))}
                   </div>
@@ -1700,21 +2029,22 @@ export default function Game() {
                         });
                       } catch {}
 
+                      // Calculate step waypoints for animation and broadcast
+                      const hero = state?.characters.find((c) => c.id === heroId);
+                      const waypoints: { x: number; y: number }[] = [];
+                      if (hero) {
+                        let cx = hero.x;
+                        let cy = hero.y;
+                        while (cx !== x || cy !== y) {
+                          cx += Math.sign(x - cx);
+                          cy += Math.sign(y - cy);
+                          waypoints.push({ x: cx, y: cy });
+                        }
+                      }
+                      if (waypoints.length === 0) waypoints.push({ x, y });
+
                       // 4. Authoritative WebSocket dispatch with REST fallback
                       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                        const hero = state?.characters.find((c) => c.id === heroId);
-                        const waypoints: { x: number; y: number }[] = [];
-                        if (hero) {
-                          let cx = hero.x;
-                          let cy = hero.y;
-                          while (cx !== x || cy !== y) {
-                            cx += Math.sign(x - cx);
-                            cy += Math.sign(y - cy);
-                            waypoints.push({ x: cx, y: cy });
-                          }
-                        }
-                        if (waypoints.length === 0) waypoints.push({ x, y });
-
                         wsRef.current.send(
                           JSON.stringify({
                             type: 'MOVE_PATH',
@@ -1727,7 +2057,7 @@ export default function Game() {
                           })
                         );
                       } else {
-                        void action({ action: 'move', character: heroId, x, y, maxBound: curGrid - 1, gridSize: curGrid });
+                        void action({ action: 'move', character: heroId, x, y, waypoints, maxBound: curGrid - 1, gridSize: curGrid });
                       }
                     }}
                     onMoveHeroPath={(heroId, waypoints) => {
@@ -1738,7 +2068,19 @@ export default function Game() {
                       // 1. Arm rollback shield
                       localMoveShieldRef.current[heroId] = { x: finalDest.x, y: finalDest.y, time: Date.now() };
 
-                      // 2. Instant cross-window broadcast on same PC
+                      // 2. Optimistic Update: instantly update position locally for zero perceived latency!
+                      setRoom((prev) => {
+                        if (!prev) return prev;
+                        return {
+                          ...prev,
+                          state: {
+                            ...prev.state,
+                            characters: prev.state.characters.map((c) => (c.id === heroId ? { ...c, x: finalDest.x, y: finalDest.y } : c))
+                          }
+                        };
+                      });
+
+                      // 3. Instant cross-window broadcast on same PC
                       try {
                         broadcastChannelRef.current?.postMessage({
                           type: 'HERO_MOVE_PATH',
@@ -1747,7 +2089,7 @@ export default function Game() {
                         });
                       } catch {}
 
-                      // 3. Authoritative WebSocket dispatch to Cloudflare Durable Object
+                      // 4. Authoritative WebSocket dispatch to Cloudflare Durable Object
                       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                         wsRef.current.send(
                           JSON.stringify({
@@ -1766,6 +2108,7 @@ export default function Game() {
                           character: heroId,
                           x: finalDest.x,
                           y: finalDest.y,
+                          waypoints,
                           maxBound: curGrid - 1,
                           gridSize: curGrid
                         });
@@ -2145,6 +2488,10 @@ export default function Game() {
                     onSaveNotes={(n) => void action({ action: 'notes', notes: n })}
                     isOwner={Boolean(owner)}
                     questProgress={state?.questProgress}
+                    worldFlags={state?.worldFlags}
+                    activeAdventureId={state?.activeMicroAdventureId}
+                    onStartAdventure={handleStartAdventure}
+                    onChallengeDragon={handleChallengeDragon}
                   />
                 )}
 

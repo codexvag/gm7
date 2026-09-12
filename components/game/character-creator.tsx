@@ -27,6 +27,10 @@ import {
   signed,
   newCharacter,
   calculateEquippedStats,
+  POINT_BUY_COSTS,
+  TOTAL_POINT_BUY_POINTS,
+  calculatePointBuyScoreCost,
+  calculateTotalPointBuyCost,
   type Character
 } from '@/lib/game-engine';
 
@@ -270,6 +274,33 @@ export function CharacterCreator({ isOpen, onClose, onSave, busy }: CharacterCre
     }
   };
 
+  const currentPointCost = calculateTotalPointBuyCost(baseStats);
+  const remainingPoints = TOTAL_POINT_BUY_POINTS - currentPointCost;
+  const isStep2Valid = remainingPoints >= 0 && baseStats.every((v) => v >= 8 && v <= 15);
+
+  const handleIncreaseStat = (idx: number) => {
+    const currentVal = baseStats[idx];
+    if (currentVal >= 15) return;
+    const nextVal = currentVal + 1;
+    const costDiff = calculatePointBuyScoreCost(nextVal) - calculatePointBuyScoreCost(currentVal);
+    if (remainingPoints < costDiff) return;
+    const next = [...baseStats];
+    next[idx] = nextVal;
+    setBaseStats(next);
+  };
+
+  const handleDecreaseStat = (idx: number) => {
+    const currentVal = baseStats[idx];
+    if (currentVal <= 8) return;
+    const next = [...baseStats];
+    next[idx] = currentVal - 1;
+    setBaseStats(next);
+  };
+
+  const handleApplyPreset = (stats: number[]) => {
+    setBaseStats([...stats]);
+  };
+
   const handleRollRandomStats = () => {
     // 4d6 drop lowest for 6 stats
     const rolled = Array.from({ length: 6 }, () => {
@@ -282,6 +313,10 @@ export function CharacterCreator({ isOpen, onClose, onSave, busy }: CharacterCre
   };
 
   const handleFinish = async () => {
+    if (!isStep2Valid) {
+      alert('Distribuição de atributos excede o limite de 27 pontos ou possui atributos base fora do intervalo 8 a 15 permitido pelas regras oficiais de D&D 5e.');
+      return;
+    }
     const heroName = name.trim() || `Herói de ${chosenSpecies}`;
     const baseHero: Character = {
       ...newCharacter(),
@@ -438,78 +473,167 @@ export function CharacterCreator({ isOpen, onClose, onSave, busy }: CharacterCre
 
           {step === 2 && (
             <div className="space-y-4 animate-slide-up">
-              <div className="flex items-center justify-between">
+              {/* Header with Title and Point Buy Budget Counter */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-zinc-900/80 border border-amber-900/60 rounded-2xl">
                 <div>
-                  <h3 className="text-sm font-bold text-zinc-200">Atributos Primários (D&D 5e SRD)</h3>
+                  <h3 className="text-sm font-bold text-amber-200 flex items-center gap-1.5">
+                    <Sparkles size={16} className="text-amber-400" />
+                    Atributos • Compra de Pontos (D&D 5e)
+                  </h3>
                   <p className="text-xs text-zinc-400">
-                    Bônus da espécie {chosenSpecies} já somados automaticamente.
+                    Bônus de {chosenSpecies} somados. Base de 8 a 15 (8-13 custam 1 pt, 14-15 custam 2 pts).
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className={`px-3 py-1.5 rounded-xl font-mono text-xs font-bold flex items-center justify-between sm:justify-end gap-2 border self-start sm:self-auto ${
+                  remainingPoints === 0
+                    ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300'
+                    : remainingPoints > 0
+                    ? 'bg-amber-950/70 border-amber-500/60 text-amber-300'
+                    : 'bg-red-950/70 border-red-500/60 text-red-300'
+                }`}>
+                  <span className="text-[11px] uppercase tracking-wider text-zinc-300">Pontos Restantes:</span>
+                  <span className="text-sm font-black">{remainingPoints} / 27</span>
+                </div>
+              </div>
+
+              {/* Quick Preset Buttons (Standard Array & Class Archetypes) */}
+              <div className="space-y-1">
+                <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider block">
+                  Distribuição Rápida (Exatamente 27 Pontos)
+                </span>
+                <div className="flex flex-wrap gap-1.5 text-xs">
                   <button
-                    onClick={() => setBaseStats([15, 14, 13, 12, 10, 8])}
-                    className="text-xs px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 rounded-lg transition-colors"
+                    type="button"
+                    onClick={() => handleApplyPreset([15, 14, 13, 12, 10, 8])}
+                    className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 rounded-lg transition-colors font-medium"
+                    title="Matriz Padrão clássica D&D 5e: 15, 14, 13, 12, 10, 8"
                   >
-                    Padrão
+                    Matriz Padrão [15,14,13,12,10,8]
                   </button>
                   <button
-                    onClick={handleRollRandomStats}
-                    className="text-xs px-2.5 py-1 bg-amber-950/60 hover:bg-amber-900/60 text-amber-300 border border-amber-700/60 rounded-lg flex items-center gap-1 transition-colors"
+                    type="button"
+                    onClick={() => handleApplyPreset([15, 13, 14, 8, 12, 10])}
+                    className="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-zinc-700 rounded-lg transition-colors text-[11px]"
+                    title="Foco em Força e Constituição (Guerreiro / Bárbaro / Paladino)"
                   >
-                    <Dices size={13} /> Rolar 4d6
+                    Físico (FOR)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyPreset([10, 15, 14, 12, 13, 8])}
+                    className="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-zinc-700 rounded-lg transition-colors text-[11px]"
+                    title="Foco em Destreza e Agilidade (Ladino / Patrulheiro / Monge)"
+                  >
+                    Ágil (DES)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyPreset([8, 14, 13, 15, 12, 10])}
+                    className="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-zinc-700 rounded-lg transition-colors text-[11px]"
+                    title="Foco em Intelecto e Magia (Mago)"
+                  >
+                    Mental (INT)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyPreset([12, 10, 14, 8, 15, 13])}
+                    className="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-zinc-700 rounded-lg transition-colors text-[11px]"
+                    title="Foco em Sabedoria e Fé (Clérigo / Druida)"
+                  >
+                    Divino (SAB)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyPreset([8, 14, 13, 10, 12, 15])}
+                    className="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-zinc-700 rounded-lg transition-colors text-[11px]"
+                    title="Foco em Carisma e Presença (Bardo / Feiticeiro / Bruxo)"
+                  >
+                    Carisma (CAR)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyPreset([8, 8, 8, 8, 8, 8])}
+                    className="px-2 py-1 bg-zinc-900/60 hover:bg-zinc-800 text-zinc-400 border border-zinc-800 rounded-lg transition-colors text-[11px]"
+                    title="Resetar todos os atributos base para 8 (27 pontos livres)"
+                  >
+                    Resetar (8)
                   </button>
                 </div>
               </div>
 
+              {/* 6 Attribute Cards */}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {abilities.map((abName, idx) => {
                   const baseVal = baseStats[idx];
                   const racial = speciesInfo.statsBonus[idx];
                   const total = baseVal + racial;
                   const m = mod(total);
+                  const costCurrent = POINT_BUY_COSTS[baseVal] ?? 0;
+                  const incCost = baseVal < 15 ? (POINT_BUY_COSTS[baseVal + 1] - POINT_BUY_COSTS[baseVal]) : 0;
+                  const canIncrease = baseVal < 15 && remainingPoints >= incCost;
+                  const canDecrease = baseVal > 8;
 
                   return (
                     <div
                       key={abName}
-                      className="p-3 rounded-2xl bg-zinc-900/80 border border-zinc-800 flex flex-col items-center gap-1 shadow-md"
+                      className="p-3 rounded-2xl bg-zinc-900/80 border border-zinc-800 flex flex-col items-center gap-1 shadow-md hover:border-zinc-700 transition-colors"
                     >
                       <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
                         {abName}
                       </span>
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() => {
-                            const next = [...baseStats];
-                            next[idx] = Math.max(6, next[idx] - 1);
-                            setBaseStats(next);
-                          }}
-                          className="w-6 h-6 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 flex items-center justify-center font-bold"
+                          type="button"
+                          disabled={!canDecrease}
+                          onClick={() => handleDecreaseStat(idx)}
+                          className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm transition-all ${
+                            canDecrease
+                              ? 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700 active:scale-95 shadow cursor-pointer'
+                              : 'bg-zinc-900/60 text-zinc-600 cursor-not-allowed border border-zinc-800'
+                          }`}
+                          title={canDecrease ? `Diminuir ${abName} (devolve pontos)` : 'Mínimo de 8 atingido (regra oficial D&D 5e)'}
                         >
                           -
                         </button>
-                        <span className="font-serif font-black text-2xl text-amber-300 w-8 text-center">
+                        <span className="font-serif font-black text-2xl text-amber-300 w-9 text-center">
                           {total}
                         </span>
                         <button
-                          onClick={() => {
-                            const next = [...baseStats];
-                            next[idx] = Math.min(18, next[idx] + 1);
-                            setBaseStats(next);
-                          }}
-                          className="w-6 h-6 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 flex items-center justify-center font-bold"
+                          type="button"
+                          disabled={!canIncrease}
+                          onClick={() => handleIncreaseStat(idx)}
+                          className={`w-7 h-7 rounded-lg flex items-center justify-center font-bold text-sm transition-all ${
+                            canIncrease
+                              ? 'bg-zinc-800 text-zinc-200 hover:bg-amber-900/50 hover:text-amber-200 active:scale-95 shadow cursor-pointer'
+                              : 'bg-zinc-900/60 text-zinc-600 cursor-not-allowed border border-zinc-800'
+                          }`}
+                          title={
+                            baseVal >= 15
+                              ? 'Máximo de 15 base atingido (regra oficial D&D 5e)'
+                              : !canIncrease
+                              ? `Pontos insuficientes (requer +${incCost} pts)`
+                              : `Aumentar ${abName} (custa ${incCost} pt${incCost > 1 ? 's' : ''})`
+                          }
                         >
                           +
                         </button>
                       </div>
-                      <div className="flex items-center gap-2 text-[10px] text-zinc-400">
-                        <span>Mod: <strong className="text-zinc-200">{signed(m)}</strong></span>
-                        {racial > 0 && <span className="text-emerald-400">+{racial} raça</span>}
+
+                      <div className="flex flex-col items-center gap-0.5 text-[10px] text-zinc-400">
+                        <div className="flex items-center gap-1.5">
+                          <span>Mod: <strong className="text-zinc-200 font-bold">{signed(m)}</strong></span>
+                          {racial > 0 && <span className="text-emerald-400 font-semibold">+{racial} raça</span>}
+                        </div>
+                        <span className="text-zinc-500 font-mono">
+                          Base: {baseVal} ({costCurrent} pts)
+                        </span>
                       </div>
                     </div>
                   );
                 })}
               </div>
 
+              {/* Status and Summary */}
               <div className="p-3 bg-zinc-900/50 border border-zinc-800 rounded-xl flex items-center justify-around text-xs font-mono text-zinc-300">
                 <span className="flex items-center gap-1">
                   <Heart size={14} className="text-red-400" /> PV Máximos: <strong>{maxHp}</strong>
@@ -618,16 +742,26 @@ export function CharacterCreator({ isOpen, onClose, onSave, busy }: CharacterCre
 
           {step < 4 ? (
             <button
+              disabled={step === 2 && !isStep2Valid}
               onClick={() => setStep((step + 1) as any)}
-              className="flex items-center gap-1 gold-button text-xs py-1.5 px-4"
+              className={`flex items-center gap-1 text-xs py-1.5 px-4 rounded-xl font-bold transition-all ${
+                step === 2 && !isStep2Valid
+                  ? 'bg-zinc-900 text-zinc-500 cursor-not-allowed border border-zinc-800'
+                  : 'gold-button'
+              }`}
+              title={step === 2 && !isStep2Valid ? 'Distribua os pontos dentro do limite oficial de 27 pts (D&D 5e)' : ''}
             >
               Próximo <ChevronRight size={14} />
             </button>
           ) : (
             <button
-              disabled={busy}
+              disabled={busy || !isStep2Valid}
               onClick={handleFinish}
-              className="flex items-center gap-1.5 gold-button text-xs py-2 px-5 font-bold shadow-lg"
+              className={`flex items-center gap-1.5 text-xs py-2 px-5 font-bold shadow-lg rounded-xl transition-all ${
+                busy || !isStep2Valid
+                  ? 'bg-zinc-900 text-zinc-500 cursor-not-allowed border border-zinc-800'
+                  : 'gold-button'
+              }`}
             >
               <Sparkles size={14} /> {busy ? 'Forjando…' : 'Concluir & Jogar'}
             </button>

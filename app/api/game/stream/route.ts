@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
             type: 'update',
             ...payload
           });
-          controller.enqueue(encoder.encode(`event: update\ndata: msg\n\n`.replace('data: msg', `data: ${msg}`)));
+          controller.enqueue(encoder.encode(`event: update\ndata: ${msg}\n\n`));
         } catch {
           // Stream might be closed
         }
@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform, must-revalidate',
+      'Cache-Control': 'no-cache, no-transform, no-store, must-revalidate',
       'Connection': 'keep-alive',
       'X-Accel-Buffering': 'no'
     }

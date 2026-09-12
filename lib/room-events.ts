@@ -17,6 +17,7 @@ export interface RoomUpdatePayload {
   state: any;
   originUserId?: string;
   actionType?: string;
+  actionPayload?: any;
   timestamp: number;
 }
 
@@ -27,6 +28,7 @@ export function emitRoomUpdate(
     state: any;
     originUserId?: string;
     actionType?: string;
+    actionPayload?: any;
   }
 ) {
   const data: RoomUpdatePayload = {
@@ -35,6 +37,7 @@ export function emitRoomUpdate(
     state: payload.state,
     originUserId: payload.originUserId,
     actionType: payload.actionType,
+    actionPayload: payload.actionPayload,
     timestamp: Date.now()
   };
   roomEventBus.emit(`room:${roomId}`, data);

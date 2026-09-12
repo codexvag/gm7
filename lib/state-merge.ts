@@ -14,7 +14,26 @@ function isNewer(base: number | undefined, incoming: number | undefined): boolea
   return (base ?? 0) < (incoming ?? 0);
 }
 
-export function mergeCharacters(base: Character[], incoming: Character[]): Character[] {
+export function mergeCharacters(
+  base: Character[],
+  incoming: Character[],
+  incomingIsAuthoritative: boolean = false
+): Character[] {
+  if (incomingIsAuthoritative) {
+    // When incoming is authoritatively newer (e.g. server removed a disconnected player),
+    // incoming is the source of truth for the active entity set.
+    const baseMap = new Map<string, Character>();
+    for (const c of base) baseMap.set(c.id, c);
+
+    return incoming.map((inc) => {
+      const b = baseMap.get(inc.id);
+      if (b && isNewer(inc.updatedAt, b.updatedAt)) {
+        return b;
+      }
+      return inc;
+    });
+  }
+
   const map = new Map<string, Character>();
   for (const c of base) map.set(c.id, c);
   for (const c of incoming) {
@@ -77,7 +96,7 @@ export function mergeStates(
   const winner = useIncomingScalars ? incoming : base;
   const merged: State = {
     ...winner,
-    characters: mergeCharacters(base.characters, incoming.characters),
+    characters: mergeCharacters(base.characters, incoming.characters, useIncomingScalars),
     enemies: mergeEnemies(base.enemies, incoming.enemies),
     logs: mergeLogs(base.logs, incoming.logs).slice(-200)
   };

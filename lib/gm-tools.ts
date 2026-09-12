@@ -14,6 +14,7 @@ import {
   type Character,
   type Enemy
 } from './game-engine';
+import { MICRO_ADVENTURES, startMicroAdventure } from './micro-adventures';
 
 export interface GmToolDefinition {
   type: 'function';
@@ -137,6 +138,27 @@ export const GM_CONTROLLED_TOOLS: GmToolDefinition[] = [
           narrativeNote: { type: 'string', description: 'Nota de desdobramento narrativo para o diário de bordo' }
         },
         required: ['questKey', 'title', 'completed']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'trigger_world_event',
+      description:
+        'Desencadeia um evento ambiental ou narrativo de mundo (como rumores sobre o dragão, tremores na fenda, mudança climática ou início de microaventura pré-definida).',
+      parameters: {
+        type: 'object',
+        properties: {
+          eventType: {
+            type: 'string',
+            enum: ['dragon_rumor', 'earthquake', 'cinders', 'start_microadventure'],
+            description: 'Tipo do evento de mundo a disparar'
+          },
+          detail: { type: 'string', description: 'Descrição vívida do evento para os jogadores' },
+          adventureId: { type: 'string', description: 'ID opcional da microaventura a iniciar' }
+        },
+        required: ['eventType', 'detail']
       }
     }
   }
@@ -364,11 +386,38 @@ export function executeServerAuthoritativeGmTool(
       return { tool: name, success: true, message: logText };
     }
 
+    case 'trigger_world_event': {
+      const eventType = String(rawArgs.eventType || 'dragon_rumor');
+      const detail = String(rawArgs.detail || 'Um presságio misterioso altera a atmosfera do cenário.').slice(0, 500);
+      const adventureId = rawArgs.adventureId ? String(rawArgs.adventureId) : undefined;
+
+      if (!state.worldFlags) state.worldFlags = {};
+
+      if (eventType === 'dragon_rumor') {
+        state.worldFlags['dragon_rumor_active'] = true;
+      } else if (eventType === 'earthquake') {
+        state.worldFlags['earthquake_occurred'] = true;
+      } else if (eventType === 'cinders') {
+        state.worldFlags['cinders_falling'] = true;
+      }
+
+      let logText = `🌌 [Evento do Mundo: ${eventType.toUpperCase()}] ${detail}`;
+
+      if (adventureId && MICRO_ADVENTURES[adventureId]) {
+        const res = startMicroAdventure(state, adventureId);
+        logText += `\n${res.log}`;
+      } else {
+        state.logs.push(entry(logText, 'gm'));
+      }
+
+      return { tool: name, success: true, message: logText };
+    }
+
     default:
       return {
         tool: name,
         success: false,
-        message: `Ferramenta não autorizada ou desconhecida: "${name}". Apenas as 5 ferramentas controladas são permitidas.`
+        message: `Ferramenta não autorizada ou desconhecida: "${name}". Apenas as ferramentas autorizadas são permitidas.`
       };
   }
 }

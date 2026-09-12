@@ -1,4 +1,6 @@
-import { isGridTileWalkable, type CollisionPolygon } from './collision-system';
+import { isGridTileWalkable, type CollisionPolygon, type BiomeType } from './collision-system';
+
+export type { BiomeType };
 
 export const abilities = ['Força', 'Destreza', 'Constituição', 'Inteligência', 'Sabedoria', 'Carisma'];
 export const classes = [
@@ -23,6 +25,31 @@ export const conditions = [
 export const mod = (n: number) => Math.floor((n - 10) / 2);
 export const prof = (level: number) => 2 + Math.floor((level - 1) / 4);
 export const signed = (n: number) => (n >= 0 ? '+' : '') + n;
+
+// D&D 5e Official Point Buy & Standard Array Rules (SRD 5.1 / 2024)
+export const POINT_BUY_COSTS: Record<number, number> = {
+  8: 0,
+  9: 1,
+  10: 2,
+  11: 3,
+  12: 4,
+  13: 5,
+  14: 7,
+  15: 9
+};
+
+export const TOTAL_POINT_BUY_POINTS = 27;
+export const STANDARD_ARRAY = [15, 14, 13, 12, 10, 8];
+
+export function calculatePointBuyScoreCost(score: number): number {
+  if (score <= 8) return 0;
+  if (score > 15) return 999;
+  return POINT_BUY_COSTS[score] ?? 999;
+}
+
+export function calculateTotalPointBuyCost(baseScores: number[]): number {
+  return baseScores.reduce((acc, score) => acc + calculatePointBuyScoreCost(score), 0);
+}
 
 export type EquipmentSlots = {
   helm?: string;
@@ -442,6 +469,7 @@ export type Enemy = {
   ac: number;
   attack: number;
   damage: string;
+  weapon?: string;
   initiative: number;
   x: number;
   y: number;
@@ -469,10 +497,12 @@ export type State = {
   notes: string;
   npcs: { id: string; name: string; role: string; description: string; dialogue?: string[]; x?: number; y?: number; icon?: string }[];
   questProgress?: Record<string, boolean>;
+  worldFlags?: Record<string, boolean>;
+  activeMicroAdventureId?: string;
   actionUsed?: boolean;
   bonusActionUsed?: boolean;
   movementUsed?: number;
-  biome?: 'village' | 'forest' | 'dungeon';
+  biome?: BiomeType;
   partyInvites?: PartyInvite[];
   act?: 1 | 2 | 3;
   updatedAt?: number;
@@ -481,21 +511,39 @@ export type State = {
 export const locations = [
   {
     name: 'Vila do Rio Verde',
-    label: 'Prólogo • Assentamento de Valdoria',
+    label: 'Hub Principal • Assentamento de Valdoria',
     biome: 'village' as const,
     text: 'O sol da manhã ilumina as colinas de Vila do Rio Verde. As águas do riacho correm límpidas sob as pontes de madeira rústica. Na praça central, o Ancião Doran e a guarda reúnem bravos aventureiros para uma missão urgente.'
   },
   {
     name: 'A Floresta dos Sussurros',
-    label: 'Ato I • Bosques Profundos & Menir Sagrado',
+    label: 'Bosque Sagrado • Menir Druídico & Lago',
     biome: 'forest' as const,
     text: 'As copas altas dos carvalhos bloqueiam quase toda a luz do sol. O cheiro de terra úmida preenche o ar. Diante do lago sereno e do círculo de pedras sagradas, sombras rastejantes e sentinelas espreitam entre as folhagens.'
   },
   {
+    name: 'Pátio das Ruínas da Abadia',
+    label: 'Fortificação Externa • Arcos Caídos & Cinzas',
+    biome: 'ruins' as const,
+    text: 'Arcos de pedra quebrados erguem-se contra o vento gélido. Entre as colunas destruídas da antiga abadia, cultistas das cinzas realizam vigílias macabras em volta de altares calcinados.'
+  },
+  {
     name: 'Catacumbas dos Três Selos',
-    label: 'Ato II • Câmaras Subterrâneas & Santuário',
+    label: 'Masmorra Subterrânea • Criptas dos Escribas',
     biome: 'dungeon' as const,
-    text: 'Passos ecoam sob as lajes antigas de pedra e as piscinas rituais de água fria. O ar cheira a ozônio arcano e cinzas ancestrais. No coração do santuário, Malakor ergue-se em guarda dos segredos proibidos.'
+    text: 'Passos ecoam sob as lajes antigas de pedra e as piscinas rituais de água fria. O ar cheira a ozônio arcano e cinzas ancestrais. Portas de obsidiana trancam os segredos mais profundos de Valdoria.'
+  },
+  {
+    name: 'Desfiladeiro da Fenda Escarpada',
+    label: 'Trilha Vulcânica • Fendas de Enxofre & Ninhos',
+    biome: 'canyon' as const,
+    text: 'Paredões de basalto escuro sobem em direção ao céu tingido de fumaça. Vapores quentes de enxofre sobem das fendas rochosas, onde batedores e ninhos de wyrmlings espreitam os desatentos.'
+  },
+  {
+    name: 'O Covil de Ignisrax',
+    label: 'Cratera Magmática • Arena do Dragão Vermelho',
+    biome: 'lair' as const,
+    text: 'Um calor sufocante toma conta do ar. Pilares gigantescos de rocha negra sustentam uma caverna colossal, onde rios de magma banham montanhas de ouro e cinzas. Ao centro, olhos reptilianos incandescentes se abrem.'
   }
 ];
 
@@ -515,6 +563,7 @@ export function initialState(): State {
     movementUsed: 0,
     biome: 'village',
     questProgress: {},
+    worldFlags: {},
     act: 1,
     npcs: [
       {
@@ -740,6 +789,9 @@ export function validateCharacter(c: Character): Character {
   if (!classes.some(x => x[0] === c.className) || !species.includes(c.species)) throw Error('Classe ou espécie inválida.');
   if (!Number.isInteger(c.level) || c.level < 1 || c.level > 20 || c.stats.length !== 6 || c.stats.some(x => !Number.isInteger(x) || x < 1 || x > 30)) {
     throw Error('Confira o nível e os seis atributos.');
+  }
+  if (c.level === 1 && c.stats.some(x => x > 20)) {
+    throw Error('Atributos no nível 1 não podem ultrapassar 20 (regras oficiais D&D 5e).');
   }
   for (const n of [c.hp, c.maxHp, c.ac, c.speed, c.attack, c.spellAbility, c.exhaustion]) {
     if (!Number.isFinite(n)) throw Error('Valor numérico inválido.');
@@ -1335,7 +1387,7 @@ export function validateWaypointPath(
     };
   }
 
-  const biome = (state.biome || 'village') as 'village' | 'forest' | 'dungeon';
+  const biome = (state.biome || 'village') as BiomeType;
   const effectiveGridSize = gridSize || (maxBound + 1);
 
   // Normalize path: ignore initial point if it's the current position
@@ -1503,6 +1555,8 @@ export interface ProjectileVFX {
 
 export type WsClientMessage =
   | { type: 'JOIN_ROOM'; roomId: string; userId: string; characterId?: string }
+  | { type: 'PLAYER_JOIN'; roomId: string; userId: string; character: Character }
+  | { type: 'PLAYER_LEAVE'; roomId: string; userId?: string; characterId?: string }
   | { type: 'MOVE_PATH'; roomId: string; characterId: string; waypoints: { x: number; y: number }[]; seq: number; gridSize?: number; maxBound?: number }
   | { type: 'ATTACK'; roomId: string; actorId: string; targetId: string; weaponIndex?: number; seq: number }
   | { type: 'CAST_SPELL'; roomId: string; actorId: string; targetId?: string; spellName: string; level?: number; seq: number }
@@ -1514,6 +1568,8 @@ export type WsClientMessage =
 export type WsServerMessage =
   | { type: 'INIT_SNAPSHOT'; roomId: string; state: State; version: number; seq: number; serverTime: number }
   | { type: 'SYNC_SNAPSHOT'; roomId: string; state: State; version: number; seq: number }
+  | { type: 'PLAYER_JOINED'; roomId: string; character: Character; state: State; version: number; seq: number }
+  | { type: 'PLAYER_LEFT'; roomId: string; characterId: string; userId?: string; reason?: string; state: State; version: number; seq: number }
   | { type: 'HERO_MOVED'; roomId: string; characterId: string; waypoints: { x: number; y: number }[]; finalPos: { x: number; y: number }; seq: number }
   | { type: 'MOVE_REJECTED'; roomId: string; characterId: string; originalPos: { x: number; y: number }; reason: string; seq: number }
   | { type: 'ATTACK_RESULT'; roomId: string; actorId: string; targetId: string; projectile?: ProjectileVFX; attackResult: AttackResult; state: State; version: number; seq: number }

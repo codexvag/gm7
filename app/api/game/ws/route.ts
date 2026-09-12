@@ -41,10 +41,10 @@ class LocalWebSocketPeer extends EventTarget {
   }
 }
 
-function createWebSocketPair(): { 0: any; 1: any } {
+function createWebSocketPair(): [any, any] {
   if (typeof WebSocketPair !== 'undefined') {
     const pair = new WebSocketPair();
-    return Object.values(pair) as any;
+    return Object.values(pair) as [any, any];
   }
   const client = new LocalWebSocketPeer();
   const server = new LocalWebSocketPeer();
@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
   // Authoritative user authentication
   let userId = 'anon';
   try {
-    const user = await getChatGPTUser(req);
+    const user = await getChatGPTUser();
     if (user?.userId) userId = user.userId;
   } catch {
     // Fall back to anon or query param if available
