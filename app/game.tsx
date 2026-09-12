@@ -32,7 +32,8 @@ import {
   Coffee,
   Clock,
   Crosshair,
-  MapPin
+  MapPin,
+  Crown
 } from 'lucide-react';
 import { SidebarProvider, Sidebar, SidebarContent, SidebarMenu, SidebarMenuItem, SidebarMenuButton } from '@/components/ui/sidebar';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -74,6 +75,7 @@ import { TopEnemyHud } from '@/components/game/top-enemy-hud';
 import { BottomPlayerHud, type ActionSelection } from '@/components/game/bottom-player-hud';
 import { TacticalMap, type ProjectileVfx } from '@/components/game/tactical-map';
 import { InventoryPanel } from '@/components/game/inventory-panel';
+import { ShopModal, type ShopMerchant } from '@/components/game/shop-modal';
 import { NpcDialog, type NpcDialogData } from '@/components/game/npc-dialog';
 import { ExplorationBar } from '@/components/game/exploration-bar';
 import { QuestLog } from '@/components/game/quest-log';
@@ -91,6 +93,7 @@ import { GamemasterSidebar } from '@/components/game/gamemaster-sidebar';
 import { LevelUpModal } from '@/components/game/level-up-modal';
 import { MICRO_ADVENTURES, startMicroAdventure, completeMicroAdventure } from '@/lib/micro-adventures';
 import { spawnDragonBoss, getDragonCombatPhase, executeDragonBreath } from '@/lib/dragon-encounter';
+import { playSfx } from '@/lib/sound-effects';
 
 type ApiData = {
   error: string;
@@ -165,9 +168,7 @@ function createInitialRoom(): Room {
 
 const playCombatSound = (type: 'hit' | 'crit' | 'miss') => {
   try {
-    const audio = new Audio(`/sounds/${type}.mp3`);
-    audio.volume = type === 'crit' ? 0.6 : 0.4;
-    audio.play().catch(() => {});
+    playSfx(type);
   } catch (e) {}
 };
 
@@ -207,6 +208,8 @@ export default function Game() {
   const [showLevelUp, setShowLevelUp] = useState(false);
   const [levelUpHero, setLevelUpHero] = useState<Character | null>(null);
   const [activeNpcDialog, setActiveNpcDialog] = useState<NpcDialogData | null>(null);
+  const [showShop, setShowShop] = useState(false);
+  const [shopMerchant, setShopMerchant] = useState<ShopMerchant | null>(null);
   const [aiChoices, setAiChoices] = useState<string[]>([
     'Examinar os degraus e a névoa da abadia',
     'Tocar no sino de bronze rúnico',
@@ -987,7 +990,8 @@ export default function Game() {
   const turnEntity = [...(state?.characters || []), ...(state?.enemies || [])].find((c) => c.id === turnId);
   const isHeroTurn = active && turnId === active.id;
   const isActBossDefeated = state?.enemies ? state.enemies.length > 0 && state.enemies.every((e) => e.hp <= 0) : false;
-  const currentEnemy = state?.enemies?.find((e) => e.id === selectedEnemyId) || state?.enemies?.[0] || null;
+  const livingEnemies = state?.enemies ? state.enemies.filter((e) => e.hp > 0) : [];
+  const currentEnemy = livingEnemies.find((e) => e.id === selectedEnemyId) || livingEnemies[0] || null;
   const latestGmLog = state?.logs ? [...state.logs].reverse().find((l) => l.kind === 'gm') : null;
 
   // Auto-focus user's active hero or current combat turn entity to eliminate requiring preliminary manual clicks
@@ -1118,9 +1122,13 @@ export default function Game() {
 
   // EXECUTE COMBAT ATTACK FLOW - SERVER AUTHORITATIVE RESOLUTION
   // Sequence: Action Choice → Server Roll → Dice 3D → (dice dismiss) → Projectile VFX → Floating Text
-  const handleExecuteAttack = async (targetId: string) => {
+  const handleExecuteAttack = async (targetId?: string) => {
     if (busy || !active || !state) return;
-    const target = state.enemies.find((e) => e.id === targetId && e.hp > 0);
+    const living = state.enemies.filter((e) => e.hp > 0);
+    if (living.length === 0) return;
+    const target = (targetId && living.find((e) => e.id === targetId)) ||
+      (selectedEnemyId && living.find((e) => e.id === selectedEnemyId)) ||
+      living[0];
     if (!target) return;
 
     const dmgFormula = targetingAction?.damageFormula || active.damage;
@@ -1318,12 +1326,14 @@ export default function Game() {
           ]
         : isElenor
         ? [
+            { label: '🛒 Abrir Empório Alquímico (Comprar & Vender Poções e Elixires)', actionText: 'OPEN_SHOP_ELENOR' },
             { label: 'Preciso beber uma Poção de Cura agora para me recompor.', actionText: `Toma um gole de elixir com Elenor e revigora seus pontos de vida.` },
             { label: 'Como usar as poções durante o combate sob regras 5e?', actionText: `Pergunta a Elenor como administrar poções como 1 Ação de combate.` },
             { label: 'Guardei os frascos na mochila. Muito obrigado, Elenor!', actionText: `Agradece pelas poções e guarda os frascos na mochila.` }
           ]
         : isKaelen
         ? [
+            { label: '🛒 Abrir Arsenal & Ferraria (Comprar & Vender Equipamentos 5e)', actionText: 'OPEN_SHOP_KAELEN' },
             { label: 'Capitão Kaelen, soe o alarme! Iniciar combate contra invasores!', actionText: `Dá ordem para soar o alarme da vila e enfrentar a patrulha de cinzas!` },
             { label: 'Quais são as regras de posicionamento e cobertura?', actionText: `Pede instruções militares sobre terreno e regras de 1 Ação em combate D&D 5e.` },
             { label: 'Mantenham a guarda da ponte. Cuidaremos da floresta.', actionText: `Afirma ao Capitão que a guarda pode confiar nos aventureiros.` }
@@ -2232,11 +2242,22 @@ export default function Game() {
                     busy={busy}
                     activeTurnId={state?.combat ? turnId : undefined}
                     npcs={state?.npcs || []}
+                    corpses={state?.corpses || []}
+                    onLootCorpse={async (corpseId) => {
+                      if (!active) return;
+                      try { playSfx('loot'); } catch {}
+                      await action({ action: 'lootCorpse', character: active.id, corpseId });
+                    }}
+                    onNavigatePortal={async (targetBiome) => {
+                      try { playSfx('door'); } catch {}
+                      await handleTravel(targetBiome);
+                    }}
                     onTalkNpc={handleTalkNpc}
                     projectiles={activeProjectiles}
                     biome={battlemapBiome}
                     movementUsed={state?.movementUsed || 0}
                     onInteractPlayer={(hero) => setInteractingPlayer(hero)}
+                    screenShake={hitStopType === 'crit'}
                   />
                 </div>
 
@@ -2296,8 +2317,8 @@ export default function Game() {
                   </div>
                 )}
 
-                {/* ═══ FLOATING TACTICAL COMBAT TURN CONTROLS (ALWAYS VISIBLE OUTSIDE BOTTOM CONSOLE) ═══ */}
-                {state?.combat && (
+                {/* ═══ FLOATING TACTICAL & OPEN WORLD COMBAT TURN CONTROLS ═══ */}
+                {state?.combat ? (
                   <div className="absolute top-3 left-1/2 -translate-x-1/2 z-35 flex items-center gap-2 px-3.5 py-1.5 rounded-2xl bg-[#0b0f0b]/95 border-2 border-amber-500/90 shadow-[0_8px_32px_rgba(0,0,0,0.95)] backdrop-blur-xl animate-fade-in pointer-events-auto">
                     <div className="flex items-center gap-1.5 pr-2.5 border-r border-zinc-800 text-xs font-mono">
                       <span className="text-[10px] uppercase font-bold text-zinc-400">Rodada</span>
@@ -2306,64 +2327,119 @@ export default function Game() {
                       </span>
                     </div>
 
-                    {isHeroTurn ? (
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1.5 text-xs font-serif font-bold text-amber-200 pr-1">
-                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
-                          <span>Sua Vez: {active?.name || 'Herói'}</span>
-                        </div>
+                    {state.order && state.order.includes(active?.id || '') ? (
+                      isHeroTurn ? (
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 text-xs font-serif font-bold text-amber-200 pr-1">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
+                            <span>Sua Vez: {active?.name || 'Herói'}</span>
+                          </div>
 
-                        {/* Quick Attack Button if enemy exists */}
-                        {currentEnemy && (
-                          <button
-                            type="button"
-                            onClick={() => handleExecuteAttack(currentEnemy.id)}
-                            disabled={busy}
-                            className="px-2.5 py-1 rounded-xl bg-red-950/90 hover:bg-red-900 border border-red-500/80 text-red-100 text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 shadow hover:shadow-red-500/20 cursor-pointer"
-                            title={`Atacar ${currentEnemy.name} com ${active?.weapon || 'arma'}`}
-                          >
-                            <Swords size={13} className="text-red-400" />
-                            <span className="hidden sm:inline">Atacar</span>
-                            <span className="text-[11px] text-red-200">({currentEnemy.name})</span>
-                          </button>
-                        )}
+                          {/* Quick Attack Button if enemy exists */}
+                          {currentEnemy && (
+                            <button
+                              type="button"
+                              onClick={() => handleExecuteAttack(currentEnemy.id)}
+                              disabled={busy}
+                              className="px-2.5 py-1 rounded-xl bg-red-950/90 hover:bg-red-900 border border-red-500/80 text-red-100 text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 shadow hover:shadow-red-500/20 cursor-pointer"
+                              title={`Atacar ${currentEnemy.name} com ${active?.weapon || 'arma'}`}
+                            >
+                              <Swords size={13} className="text-red-400" />
+                              <span className="hidden sm:inline">Atacar</span>
+                              <span className="text-[11px] text-red-200">({currentEnemy.name})</span>
+                            </button>
+                          )}
 
-                        {/* Big Glowing Pass Turn / End Turn Button */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (active) void action({ action: 'pass', character: active.id });
-                          }}
-                          disabled={busy}
-                          className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-600 hover:from-amber-400 hover:to-yellow-300 text-black font-black text-xs uppercase tracking-wider shadow-[0_0_20px_rgba(245,158,11,0.7)] border-2 border-yellow-200 transition-all active:scale-95 flex items-center gap-1.5 animate-pulse cursor-pointer"
-                          title="Encerrar seu turno e passar a vez para o próximo combatente (D&D 5e)"
-                        >
-                          <Clock size={15} className="stroke-[3] text-black" />
-                          <span>PASSAR O TURNO (FIM)</span>
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="text-red-300 font-serif font-bold animate-pulse">
-                          ⚔️ Turno do Inimigo: {turnEntity?.name || 'Adversário'}
-                        </span>
-                        {owner && (
+                          {/* Big Glowing Pass Turn / End Turn Button */}
                           <button
                             type="button"
                             onClick={() => {
-                              void action({ action: 'pass', character: turnId });
+                              if (active) void action({ action: 'pass', character: active.id });
                             }}
                             disabled={busy}
-                            className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-mono border border-zinc-600 ml-1 shadow cursor-pointer"
-                            title="Mestre: Forçar avanço de turno"
+                            className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-600 hover:from-amber-400 hover:to-yellow-300 text-black font-black text-xs uppercase tracking-wider shadow-[0_0_20px_rgba(245,158,11,0.7)] border-2 border-yellow-200 transition-all active:scale-95 flex items-center gap-1.5 animate-pulse cursor-pointer"
+                            title="Encerrar seu turno e passar a vez para o próximo combatente (D&D 5e)"
                           >
-                            Forçar Próximo ▶
+                            <Clock size={15} className="stroke-[3] text-black" />
+                            <span>PASSAR O TURNO (FIM)</span>
                           </button>
-                        )}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-red-300 font-serif font-bold animate-pulse">
+                            ⚔️ Turno de: {turnEntity?.name || 'Inimigo'}
+                          </span>
+                          {owner && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void action({ action: 'pass', character: turnId });
+                              }}
+                              disabled={busy}
+                              className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-mono border border-zinc-600 ml-1 shadow cursor-pointer"
+                              title="Mestre: Forçar avanço de turno"
+                            >
+                              Forçar Próximo ▶
+                            </button>
+                          )}
+                        </div>
+                      )
+                    ) : (
+                      /* Player in MMO watching ongoing battle */
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-xs text-amber-200 font-serif">
+                          ⚔️ Batalha em Andamento ({turnEntity?.name || 'Inimigo'})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (active) void action({ action: 'joinCombat', character: active.id });
+                          }}
+                          disabled={busy}
+                          className="px-3 py-1 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-black text-xs uppercase tracking-wider shadow-[0_0_15px_rgba(16,185,129,0.7)] border border-emerald-300 transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                          title="Rolar iniciativa e participar desta batalha"
+                        >
+                          <Shield size={13} className="text-white" />
+                          <span>Entrar na Batalha</span>
+                        </button>
                       </div>
                     )}
                   </div>
-                )}
+                ) : livingEnemies.length > 0 ? (
+                  /* Open World Free Combat Banner */
+                  <div className="absolute top-3 left-1/2 -translate-x-1/2 z-35 flex items-center gap-2.5 px-3.5 py-1.5 rounded-2xl bg-[#0b0f0b]/95 border border-sky-500/80 shadow-[0_8px_30px_rgba(0,0,0,0.9)] backdrop-blur-xl animate-fade-in pointer-events-auto">
+                    <div className="flex items-center gap-1.5 text-xs text-sky-200 font-serif">
+                      <Swords size={14} className="text-sky-400 animate-pulse" />
+                      <span className="hidden sm:inline font-bold">Combate Aberto (Tempo Real)</span>
+                    </div>
+
+                    {currentEnemy && (
+                      <button
+                        type="button"
+                        onClick={() => handleExecuteAttack(currentEnemy.id)}
+                        disabled={busy}
+                        className="px-2.5 py-1 rounded-xl bg-red-950/90 hover:bg-red-900 border border-red-500/80 text-red-100 text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 shadow cursor-pointer"
+                        title={`Atacar ${currentEnemy.name}`}
+                      >
+                        <span>Golpear {currentEnemy.name}</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (active) void action({ action: 'startCombat', character: active.id });
+                      }}
+                      disabled={busy}
+                      className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-600 to-yellow-500 hover:from-amber-500 hover:to-yellow-400 text-black font-black text-xs uppercase tracking-wider shadow border border-yellow-200 transition-all active:scale-95 flex items-center gap-1 cursor-pointer"
+                      title="Iniciar combate formal por turnos e rolar iniciativa com a party (D&D 5e)"
+                    >
+                      <Crown size={12} className="text-black" />
+                      <span className="hidden sm:inline">Iniciar Batalha Tática (Iniciativa)</span>
+                      <span className="sm:hidden">Iniciativa</span>
+                    </button>
+                  </div>
+                ) : null}
 
                 {/* 1.1 LIVE GM NARRATION FLOATING WIDGET (Always visible directly on screen) */}
                 {latestGmLog && showNarrativeBox && !showGmSidebar && (
@@ -2448,15 +2524,15 @@ export default function Game() {
                       activeHero={active || null}
                       currentEnemy={currentEnemy}
                       onAttack={() => {
-                        if (active && currentEnemy) {
+                        if (active && currentEnemy && currentEnemy.hp > 0) {
                           handleExecuteAttack(currentEnemy.id);
-                        } else if (active && state?.enemies?.[0]) {
-                          handleExecuteAttack(state.enemies[0].id);
+                        } else if (active && livingEnemies.length > 0) {
+                          handleExecuteAttack(livingEnemies[0].id);
                         }
                       }}
                       onCastSpell={() => {
                         if (active) {
-                          const target = currentEnemy || state?.enemies?.[0];
+                          const target = (currentEnemy && currentEnemy.hp > 0) ? currentEnemy : livingEnemies[0];
                           if (target) {
                             void action({
                               action: 'spell',
@@ -2533,6 +2609,17 @@ export default function Game() {
                         }
                       }}
                       onOpenInventory={() => setShowInventory(true)}
+                      onOpenShop={() => {
+                        setShopMerchant({
+                          id: 'elenor',
+                          name: 'Empório de Valdoria',
+                          role: 'Mercado de Provisões & Alquimia',
+                          category: 'alchemy',
+                          avatar: '🛒',
+                          dialogue: 'Poções, armas e suprimentos certificados pelo Ancião Doran para sua jornada.'
+                        });
+                        setShowShop(true);
+                      }}
                       onOpenLevelUp={() => {
                         if (active) {
                           setLevelUpHero(active);
@@ -2630,6 +2717,72 @@ export default function Game() {
                       });
                       setShowLevelUp(false);
                       setLevelUpHero(null);
+                    }}
+                  />
+                )}
+
+                {/* NPC Dialogue Modal */}
+                {activeNpcDialog && (
+                  <NpcDialog
+                    npc={activeNpcDialog}
+                    onSelectOption={(actionText) => {
+                      if (actionText === 'OPEN_SHOP_ELENOR') {
+                        setShopMerchant({
+                          id: 'elenor',
+                          name: 'Alquimista Elenor',
+                          role: 'Erborista • Mestre das Poções',
+                          category: 'alchemy',
+                          avatar: '🧪',
+                          dialogue: 'Trago elixires destilados das raízes de Valdoria e pergaminhos arcanos para suas expedições.'
+                        });
+                        setShowShop(true);
+                        setActiveNpcDialog(null);
+                        return;
+                      }
+                      if (actionText === 'OPEN_SHOP_KAELEN') {
+                        setShopMerchant({
+                          id: 'kaelen',
+                          name: 'Capitão Kaelen',
+                          role: 'Guarda da Fronteira • Armeiro da Vila',
+                          category: 'blacksmith',
+                          avatar: '⚔️',
+                          dialogue: 'Aço forjado nas colinas e armaduras robustas certificadas para combate.'
+                        });
+                        setShowShop(true);
+                        setActiveNpcDialog(null);
+                        return;
+                      }
+                      void narrate('', `${active?.name || 'O herói'}: "${actionText}"`);
+                      setActiveNpcDialog(null);
+                    }}
+                    onClose={() => setActiveNpcDialog(null)}
+                  />
+                )}
+
+                {/* Shop & Commerce Modal */}
+                {showShop && shopMerchant && active && (
+                  <ShopModal
+                    isOpen={showShop}
+                    merchant={shopMerchant}
+                    hero={active}
+                    priceMultiplier={state?.economyContext?.priceMultiplier || 1.0}
+                    economyNotice={state?.economyContext?.narrativeNotice}
+                    onClose={() => setShowShop(false)}
+                    onBuyItem={async (item, price) => {
+                      await action({
+                        action: 'buyItem',
+                        character: active.id,
+                        item,
+                        price
+                      });
+                    }}
+                    onSellItem={async (itemName, salePrice) => {
+                      await action({
+                        action: 'sellItem',
+                        character: active.id,
+                        itemName,
+                        salePrice
+                      });
                     }}
                   />
                 )}
@@ -2840,17 +2993,24 @@ export default function Game() {
                     <p className="eyebrow">LOCAL {(i + 1).toString().padStart(2, '0')}</p>
                     <h2>{l.name}</h2>
                     <p>{l.text}</p>
-                    <button
-                      disabled={busy || !owner || state!.combat || state!.location === i}
-                      className="gold-button"
-                      onClick={() =>
-                        void action({ action: 'location', location: i }).then((ok) => {
-                          if (ok) setView('Aventura');
-                        })
-                      }
-                    >
-                      {state!.location === i ? 'Você está aqui' : 'Viajar para cá'} <ChevronRight size={15} />
-                    </button>
+                    {state!.location === i ? (
+                      <span className="text-xs px-3 py-1.5 rounded-lg bg-emerald-950/80 border border-emerald-500 text-emerald-300 font-bold font-mono">
+                        📍 Localização Atual
+                      </span>
+                    ) : (
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-[11px] text-amber-300/80 font-mono">
+                          🚪 Acesso via portões e portais do mapa tático da aventura.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setView('Aventura')}
+                          className="gold-button text-xs py-1.5 px-3 flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>Ir para o Mapa Tático</span> <ChevronRight size={13} />
+                        </button>
+                      </div>
+                    )}
                   </article>
                 ))}
               </div>
