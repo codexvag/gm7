@@ -3,18 +3,19 @@
 ARG NODE_VERSION=22.14.0
 FROM node:${NODE_VERSION}-slim AS base
 
-LABEL fly_launch_runtime="Vinext"
+LABEL app="GM7 RPG - Render Free Tier Edition"
 
 WORKDIR /app
 
 ENV NODE_ENV="production"
 ENV HOST="0.0.0.0"
-ENV PORT="3000"
+ENV PORT="10000"
+ENV NODE_OPTIONS="--max-old-space-size=384"
 
 ARG PNPM_VERSION=12.3.4
 RUN npm install -g pnpm@$PNPM_VERSION
 
-# Install system dependencies needed for native modules (sharp, workerd, etc.)
+# Install system dependencies needed for native modules and workerd
 RUN apt-get update -qq && \
     apt-get install --no-install-recommends -y \
     ca-certificates \
@@ -26,7 +27,7 @@ RUN apt-get update -qq && \
 
 # Install node dependencies
 COPY .npmrc package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install
+RUN pnpm install --frozen-lockfile
 
 # Copy application source code
 COPY . .
@@ -34,8 +35,11 @@ COPY . .
 # Build application with vinext (generates dist/server and dist/client)
 RUN pnpm run build
 
-# Expose port
-EXPOSE 3000
+# Ensure state directory exists
+RUN mkdir -p .wrangler/state
 
-# Start server using resilient launcher
+# Expose Render default port
+EXPOSE 10000
+
+# Start unified server (frontend + backend + D1 + SSE)
 CMD [ "node", "./scripts/start-server.mjs" ]

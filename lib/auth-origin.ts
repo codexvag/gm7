@@ -16,10 +16,11 @@ export function isOriginAllowed(req: NextRequest): boolean {
     // Direct nextUrl origin match
     if (origin === req.nextUrl.origin) return true;
 
-    // Production Fly.io domains & local development
+    // Production Render, Fly.io domains & local development
     if (
       originHost === 'localhost' ||
       originHost === '127.0.0.1' ||
+      originHost.endsWith('.onrender.com') ||
       originHost.endsWith('.fly.dev')
     ) {
       return true;

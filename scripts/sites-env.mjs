@@ -12,6 +12,11 @@ process.env.WRANGLER_LOG_PATH ||= path.join(runtimeRoot, "wrangler/logs");
 process.env.WRANGLER_REGISTRY_PATH ||= path.join(runtimeRoot, "wrangler/dev-registry");
 process.env.MINIFLARE_REGISTRY_PATH ||= path.join(runtimeRoot, "wrangler/registry");
 
+// Memory limit protection for Render Free Tier (512MB RAM)
+if (!process.env.NODE_OPTIONS || !process.env.NODE_OPTIONS.includes('max-old-space-size')) {
+  process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS || ''} --max-old-space-size=384`.trim();
+}
+
 process.chdir(projectRoot);
 for (const directory of [
   path.dirname(process.env.WRANGLER_LOG_PATH),

@@ -1,10 +1,20 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import './sites-env.mjs';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
+
+// Ensure memory stays within Render Free Tier limits (512MB RAM)
+if (!process.env.NODE_OPTIONS || !process.env.NODE_OPTIONS.includes('max-old-space-size')) {
+  process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS || ''} --max-old-space-size=384`.trim();
+}
+
+// Ensure .wrangler/state directory exists for local D1 persistence
+try {
+  mkdirSync(path.join(projectRoot, '.wrangler', 'state'), { recursive: true });
+} catch {}
 
 function findWranglerBin() {
   const directPath = path.join(projectRoot, 'node_modules', 'wrangler', 'bin', 'wrangler.js');
@@ -34,18 +44,25 @@ function findWranglerBin() {
 
 const wranglerBin = findWranglerBin();
 const host = process.env.HOST || '0.0.0.0';
-const port = process.env.PORT || '3000';
+const port = process.env.PORT || '10000';
 
 console.log(`[start-server] Launching Wrangler from: ${wranglerBin}`);
 console.log(`[start-server] Binding to ${host}:${port}`);
+console.log(`[render] Ready: Listening on http://${host}:${port}`);
 
-// Forward secrets and environment variables from container (Fly.io secrets) to Wrangler/workerd
-const groqKey = process.env.GROQ_API_KEY || process.env.groq_api_key || process.env.GROQ_KEY || '';
-const geminiKey = process.env.GEMINI_API_KEY || process.env.gemini_api_key || '';
-
+// Forward secrets and environment variables from container (Render / Fly.io secrets) to Wrangler/workerd
 const varsToForward = {};
-if (groqKey) varsToForward['GROQ_API_KEY'] = groqKey;
-if (geminiKey) varsToForward['GEMINI_API_KEY'] = geminiKey;
+const allowedEnvKeys = [
+  'GROQ_API_KEY', 'groq_api_key', 'GROQ_KEY',
+  'GEMINI_API_KEY', 'gemini_api_key',
+  'AI_PROVIDER', 'OPENAI_API_KEY', 'NODE_ENV'
+];
+
+for (const key of allowedEnvKeys) {
+  if (process.env[key]) {
+    varsToForward[key.toUpperCase()] = process.env[key];
+  }
+}
 
 const isJs = wranglerBin.endsWith('.js');
 const command = isJs ? process.execPath : wranglerBin;
@@ -104,7 +121,8 @@ const child = spawn(command, args, {
   env: {
     ...process.env,
     HOST: host,
-    PORT: port
+    PORT: port,
+    NODE_OPTIONS: process.env.NODE_OPTIONS
   }
 });
 
