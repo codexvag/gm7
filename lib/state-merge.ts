@@ -6,8 +6,10 @@ import type { Character, Enemy, Log, State } from './game-engine';
 // This prevents players being reset to spawn or disappearing when two
 // isolates diverge on the version counter.
 
-export function touchChar(c: { updatedAt?: number }): void {
-  c.updatedAt = Date.now();
+export function touchChar(c: { updatedAt?: number; lastSeen?: number }): void {
+  const now = Date.now();
+  c.updatedAt = now;
+  c.lastSeen = now;
 }
 
 function isNewer(base: number | undefined, incoming: number | undefined): boolean {

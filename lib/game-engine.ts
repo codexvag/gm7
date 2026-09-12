@@ -448,6 +448,7 @@ export type Character = {
   gold?: number;
   partyId?: string;
   updatedAt?: number;
+  lastSeen?: number;
 };
 
 export type PartyInvite = {

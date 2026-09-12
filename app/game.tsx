@@ -229,6 +229,14 @@ export default function Game() {
   const isWsConnectedRef = React.useRef<boolean>(false);
   const isSseConnectedRef = React.useRef<boolean>(false);
   const isSyncFetchingRef = React.useRef<boolean>(false);
+  const selectedRef = React.useRef<string>(selected);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+  const userRef = React.useRef<string>(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
   const [remoteWalkPath, setRemoteWalkPath] = useState<{ characterId: string; waypoints: Point[]; seq: number } | null>(null);
   const [showPartySidebar, setShowPartySidebar] = useState(true);
   const [showGmSidebar, setShowGmSidebar] = useState(false);
@@ -299,11 +307,11 @@ export default function Game() {
       const activeCharIds = new Set(incomingChars.map((c) => c.id));
       const protectedChars = incomingChars.map((char: Character) => {
         const shield = localMoveShieldRef.current[char.id];
-        if (shield && now - shield.time < 2000) {
-          if (char.x === shield.x && char.y === shield.y) {
-            delete localMoveShieldRef.current[char.id];
-          } else {
+        if (shield) {
+          if (now - shield.time < 1500) {
             return { ...char, x: shield.x, y: shield.y };
+          } else {
+            delete localMoveShieldRef.current[char.id];
           }
         }
         return char;
@@ -313,7 +321,7 @@ export default function Game() {
       for (const c of prevChars) {
         if (!activeCharIds.has(c.id)) {
           const shield = localMoveShieldRef.current[c.id];
-          if (shield && now - shield.time < 2000) {
+          if (shield && now - shield.time < 1500) {
             protectedChars.push({ ...c, x: shield.x, y: shield.y });
           }
         }
@@ -378,10 +386,10 @@ export default function Game() {
         const isMmo = d.room.id === 'mmo-world-village';
         const myHeroes = heroes.filter((c: Character) => isMmo ? c.owner === d.user : (!c.owner || c.owner === d.user));
         setSelected((p) => {
-          if (p && heroes.some((c: Character) => c.id === p)) {
+          if (p && myHeroes.some((c: Character) => c.id === p)) {
             return p;
           }
-          return myHeroes[0]?.id || heroes[0]?.id || '';
+          return myHeroes[0]?.id || (!isMmo ? heroes[0]?.id : '') || '';
         });
         setSelectedEnemyId((e) =>
           d.room.state.enemies.some((en: Enemy) => en.id === e)
@@ -490,7 +498,9 @@ export default function Game() {
     const connectSse = () => {
       if (isDisposed) return;
       try {
-        const sseUrl = `/api/game/stream?room=${encodeURIComponent(roomId)}`;
+        const myCharId = selectedRef.current || '';
+        const myUserId = userRef.current || '';
+        const sseUrl = `/api/game/stream?room=${encodeURIComponent(roomId)}${myUserId ? `&userId=${encodeURIComponent(myUserId)}` : ''}${myCharId ? `&characterId=${encodeURIComponent(myCharId)}` : ''}`;
         es = new EventSource(sseUrl);
 
         es.onopen = () => {
@@ -879,7 +889,13 @@ export default function Game() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ room: curRoom?.id, version: curRoom?.version, ...a })
         });
-        const d = (await r.json()) as ApiData;
+        const rawText = await r.text();
+        let d = {} as ApiData;
+        try {
+          d = rawText ? (JSON.parse(rawText) as ApiData) : ({} as ApiData);
+        } catch {
+          throw new Error(rawText?.slice(0, 120) || `Falha de rede (${r.status})`);
+        }
         if (!r.ok) {
           if (r.status === 409) {
             if (d.room) {
@@ -960,17 +976,91 @@ export default function Game() {
 
   const state = room?.state;
   const owner = room?.owner === user;
-  const active = state?.characters.find((c) => c.id === selected) || state?.characters[0];
+  const isMmoRoom = room?.id === 'mmo-world-village';
+  const myHeroes = (state?.characters || []).filter((c) => isMmoRoom ? c.owner === user : (!c.owner || c.owner === user));
+  const active = (state?.characters || []).find((c) => c.id === selected && (isMmoRoom ? c.owner === user : true))
+    || myHeroes[0]
+    || (state?.characters || [])[0];
   const location = (locations && locations[state?.location || 0]) || locations[0];
-  const canEdit = active && (owner || active.owner === user);
+  const canEdit = active && (owner || active.owner === user || !isMmoRoom);
   const turnId = state?.order[state.turn];
   const turnEntity = [...(state?.characters || []), ...(state?.enemies || [])].find((c) => c.id === turnId);
   const isHeroTurn = active && turnId === active.id;
   const isActBossDefeated = state?.enemies ? state.enemies.length > 0 && state.enemies.every((e) => e.hp <= 0) : false;
-  const isMmoRoom = room?.id === 'mmo-world-village';
-  const myHeroes = (state?.characters || []).filter((c) => isMmoRoom ? c.owner === user : (!c.owner || c.owner === user));
   const currentEnemy = state?.enemies?.find((e) => e.id === selectedEnemyId) || state?.enemies?.[0] || null;
   const latestGmLog = state?.logs ? [...state.logs].reverse().find((l) => l.kind === 'gm') : null;
+
+  // Auto-focus user's active hero or current combat turn entity to eliminate requiring preliminary manual clicks
+  useEffect(() => {
+    if (!state) return;
+    if (state.combat && state.order && state.turn !== undefined) {
+      const currentTurnId = state.order[state.turn];
+      const isMyTurn = myHeroes.some((h) => h.id === currentTurnId);
+      if (isMyTurn && selected !== currentTurnId) {
+        setSelected(currentTurnId);
+        return;
+      }
+    }
+    if (myHeroes.length > 0) {
+      const isCurrentSelectedMine = myHeroes.some((h) => h.id === selected);
+      if (!isCurrentSelectedMine) {
+        setSelected(myHeroes[0].id);
+      }
+    }
+  }, [state?.combat, state?.turn, state?.order, myHeroes, selected]);
+
+  // Clean multiplayer disconnect on window close / navigation
+  useEffect(() => {
+    const handleUnload = () => {
+      const curRoom = roomRef.current;
+      const curUser = userRef.current;
+      if (curRoom?.id === 'mmo-world-village' && curUser) {
+        const charToLeave = selectedRef.current;
+        const payload = JSON.stringify({
+          room: curRoom.id,
+          action: 'leave',
+          character: charToLeave
+        });
+        if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+          navigator.sendBeacon('/api/game', new Blob([payload], { type: 'application/json' }));
+        } else {
+          fetch('/api/game', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+            keepalive: true
+          }).catch(() => {});
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
+    };
+  }, []);
+
+  // Periodic MMO heartbeat (every 25s) to refresh lastSeen
+  useEffect(() => {
+    if (room?.id !== 'mmo-world-village') return;
+    const interval = setInterval(() => {
+      const curChar = selectedRef.current;
+      if (curChar) {
+        fetch('/api/game', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            room: 'mmo-world-village',
+            action: 'heartbeat',
+            character: curChar
+          })
+        }).catch(() => {});
+      }
+    }, 25000);
+    return () => clearInterval(interval);
+  }, [room?.id]);
 
   // Memoized 3D dice dismissal — fires pending VFX AFTER dice disappears
   const handleDiceComplete = useCallback(() => {
@@ -1991,7 +2081,7 @@ export default function Game() {
                   <TacticalMap
                     characters={state?.characters || []}
                     enemies={state?.enemies || []}
-                    selectedHeroId={selected}
+                    selectedHeroId={active?.id || selected}
                     selectedEnemyId={selectedEnemyId}
                     targetingAction={targetingAction}
                     onCancelTargeting={() => {
@@ -2321,10 +2411,12 @@ export default function Game() {
                       isMmoRoom={room?.id === 'mmo-world-village'}
                       onInteractPlayer={(hero) => setInteractingPlayer(hero)}
                       onInviteToParty={async (hero) => {
-                        await action({ action: 'partyInvite', character: selected, targetCharId: hero.id });
+                        const senderCharId = active?.id || myHeroes[0]?.id || selected;
+                        await action({ action: 'partyInvite', character: senderCharId, targetCharId: hero.id });
                       }}
                       onLeaveParty={async () => {
-                        await action({ action: 'partyLeave', character: selected });
+                        const senderCharId = active?.id || myHeroes[0]?.id || selected;
+                        await action({ action: 'partyLeave', character: senderCharId });
                       }}
                     />
                   </div>
@@ -3005,7 +3097,8 @@ export default function Game() {
                     onClick={async () => {
                       const target = interactingPlayer;
                       setInteractingPlayer(null);
-                      await action({ action: 'partyInvite', character: selected, targetCharId: target.id });
+                      const senderCharId = active?.id || myHeroes[0]?.id || selected;
+                      await action({ action: 'partyInvite', character: senderCharId, targetCharId: target.id });
                     }}
                     className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 via-green-500 to-emerald-600 hover:from-emerald-500 hover:to-green-400 text-black font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95 cursor-pointer"
                   >

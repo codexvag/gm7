@@ -180,11 +180,28 @@ export async function GET(req: NextRequest) {
       ]);
       room = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(id).first<Room>();
     }
+    let parsedState = room ? JSON.parse(room.state) : null;
+    if (parsedState && room?.id === MMO_ROOM_ID && Array.isArray(parsedState.characters)) {
+      const now = Date.now();
+      const initialCount = parsedState.characters.length;
+      parsedState.characters = parsedState.characters.filter((ch: Character) => {
+        if (ch.owner === user.userId) return true;
+        if (!ch.lastSeen) return true;
+        return (now - ch.lastSeen) < 60000;
+      });
+      if (parsedState.characters.length !== initialCount) {
+        void db.prepare('UPDATE rooms SET state=? WHERE id=?')
+          .bind(JSON.stringify(parsedState), MMO_ROOM_ID)
+          .run()
+          .catch(() => {});
+      }
+    }
+
     return withUserSession(NextResponse.json({
       signedIn: true,
       user: user.userId,
       rooms: roomList,
-      room: room ? { ...room, state: JSON.parse(room.state) } : null
+      room: room ? { ...room, state: parsedState } : null
     }), user);
   } catch (err) {
     console.error('[GET /api/game Error]:', err);
@@ -328,13 +345,33 @@ export async function POST(req: NextRequest) {
     }
 
     let s: State = JSON.parse(r.state);
-    const owner = isMmo || r.owner === user.userId;
+    const currentUserId = user?.userId;
+    const owner = isMmo || (currentUserId ? r.owner === currentUserId : false);
+
+    // Prune stale characters in MMO world (inactivity > 60s)
+    if (isMmo && Array.isArray(s.characters)) {
+      const now = Date.now();
+      s.characters = s.characters.filter((ch: Character) => {
+        if (currentUserId && ch.owner === currentUserId) return true;
+        if (!ch.lastSeen) return true;
+        return (now - ch.lastSeen) < 60000;
+      });
+    }
+
     let c = s.characters.find((c) => c.id === a.character);
-    if (!c && s.characters.length > 0) {
-      c = s.characters.find((ch) => isMmo ? ch.owner === user!.userId : (!ch.owner || ch.owner === user!.userId)) || s.characters[0];
-      if (c) {
-        a.character = c.id;
+    // If c does not belong to user in MMO, or if c was not found, auto-find user's own character!
+    if ((!c || (isMmo && c.owner && c.owner !== user!.userId)) && s.characters.length > 0) {
+      const userChar = s.characters.find((ch) => ch.owner === user!.userId);
+      if (userChar) {
+        c = userChar;
+        a.character = userChar.id;
+      } else if (!c) {
+        c = s.characters.find((ch) => !ch.owner || ch.owner === user!.userId) || s.characters[0];
+        if (c) a.character = c.id;
       }
+    }
+    if (c && (c.owner === user!.userId || !c.owner)) {
+      touchChar(c);
     }
     const own = () => {
       if (!c) throw Error('Personagem não encontrado.');
@@ -1121,9 +1158,11 @@ export async function POST(req: NextRequest) {
         break;
       }
       case 'partyInvite': {
-        const senderChar = s.characters.find((ch) => (isMmo ? ch.owner === user!.userId : true) && (ch.id === a.character || ch.id === a.fromCharId)) ||
-          s.characters.find((ch) => ch.owner === user!.userId);
-        if (!senderChar) throw Error('Você precisa de um personagem seu para enviar convites.');
+        const senderChar = s.characters.find((ch) => ch.owner === user!.userId) ||
+          s.characters.find((ch) => (isMmo ? ch.owner === user!.userId : true) && (ch.id === a.character || ch.id === a.fromCharId)) ||
+          s.characters.find((ch) => ch.id === a.character) ||
+          s.characters[0];
+        if (!senderChar) throw Error('Crie um personagem antes de enviar convites.');
         
         const targetId = String(a.targetCharId || a.target || '');
         const targetChar = s.characters.find((ch) => ch.id === targetId);
@@ -1196,6 +1235,26 @@ export async function POST(req: NextRequest) {
           remaining[0].partyId = undefined;
         }
         log(`🚪 ${p.name} saiu do grupo e agora segue como aventureiro solo.`, 'player');
+        break;
+      }
+      case 'leave': {
+        const targetCharId = a.character || a.characterId;
+        const initialCount = s.characters.length;
+        if (targetCharId) {
+          s.characters = s.characters.filter((ch) => ch.id !== targetCharId);
+        } else if (user) {
+          const leaveUid = user.userId;
+          s.characters = s.characters.filter((ch) => ch.owner !== leaveUid);
+        }
+        if (s.characters.length !== initialCount) {
+          log(`👋 Um aventureiro partiu da área e descansou na taverna.`, 'system');
+        }
+        break;
+      }
+      case 'heartbeat': {
+        if (c) {
+          touchChar(c);
+        }
         break;
       }
       default:

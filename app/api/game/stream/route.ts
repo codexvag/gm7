@@ -1,12 +1,14 @@
 import { NextRequest } from 'next/server';
 import { database } from '@/lib/room-db';
-import { roomEventBus, type RoomUpdatePayload } from '@/lib/room-events';
+import { roomEventBus, emitRoomUpdate, type RoomUpdatePayload } from '@/lib/room-events';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
   const roomId = req.nextUrl.searchParams.get('room') || 'mmo-world-village';
+  const userId = req.nextUrl.searchParams.get('userId') || '';
+  const characterId = req.nextUrl.searchParams.get('characterId') || '';
 
   // Verify room exists in DB
   const db = await database();
@@ -21,6 +23,49 @@ export async function GET(req: NextRequest) {
   const encoder = new TextEncoder();
   let keepAliveTimer: NodeJS.Timeout | null = null;
   let eventListener: ((data: RoomUpdatePayload) => void) | null = null;
+
+  const handleClientDisconnect = () => {
+    if (eventListener) {
+      roomEventBus.off(`room:${roomId}`, eventListener);
+      eventListener = null;
+    }
+    if (keepAliveTimer) {
+      clearInterval(keepAliveTimer);
+      keepAliveTimer = null;
+    }
+
+    if (roomId === 'mmo-world-village' && (characterId || userId)) {
+      setTimeout(async () => {
+        try {
+          const dbInstance = await database();
+          const current = await dbInstance.prepare('SELECT state, version FROM rooms WHERE id=?').bind(roomId).first<any>();
+          if (current && current.state) {
+            const st = JSON.parse(current.state);
+            const initialCount = st.characters?.length || 0;
+            st.characters = (st.characters || []).filter((ch: any) => {
+              if (characterId && ch.id === characterId) return false;
+              if (userId && ch.owner === userId && !characterId) return false;
+              return true;
+            });
+            if (st.characters.length !== initialCount) {
+              const nextVer = (current.version || 0) + 1;
+              await dbInstance.prepare('UPDATE rooms SET state=?, version=? WHERE id=?')
+                .bind(JSON.stringify(st), nextVer, roomId)
+                .run();
+              emitRoomUpdate(roomId, {
+                version: nextVer,
+                state: st,
+                actionType: 'leave',
+                actionPayload: { characterId, userId }
+              });
+            }
+          }
+        } catch (err) {
+          console.warn('SSE disconnect cleanup notice:', err);
+        }
+      }, 3500);
+    }
+  };
 
   const stream = new ReadableStream({
     start(controller) {
@@ -64,27 +109,13 @@ export async function GET(req: NextRequest) {
       }, 15000);
     },
     cancel() {
-      if (eventListener) {
-        roomEventBus.off(`room:${roomId}`, eventListener);
-        eventListener = null;
-      }
-      if (keepAliveTimer) {
-        clearInterval(keepAliveTimer);
-        keepAliveTimer = null;
-      }
+      handleClientDisconnect();
     }
   });
 
   // Handle client abort
   req.signal.addEventListener('abort', () => {
-    if (eventListener) {
-      roomEventBus.off(`room:${roomId}`, eventListener);
-      eventListener = null;
-    }
-    if (keepAliveTimer) {
-      clearInterval(keepAliveTimer);
-      keepAliveTimer = null;
-    }
+    handleClientDisconnect();
   });
 
   return new Response(stream, {
