@@ -18,7 +18,7 @@ import {
   type Enemy
 } from './game-engine';
 import { generateProceduralItem, type ItemTier } from './procedural-items';
-import { MICRO_ADVENTURES, startMicroAdventure } from './micro-adventures';
+import { MICRO_ADVENTURES } from './micro-adventures';
 
 export interface CompactWorldContext {
   biome: BiomeType;
@@ -140,13 +140,13 @@ export function evaluateDirectorPacing(ctx: CompactWorldContext, roomId: string)
   const now = Date.now();
 
   // RULE 2: Post-combat cooldown (at least 90 seconds of breathing room)
-  if (now - mem.lastCombatEndTimestamp < 90000) {
+  if (now - mem.lastCombatEndTimestamp < 45000) {
     return { canAct: false, reason: 'Período pós-combate ativo: concedendo tempo de descanso aos jogadores.' };
   }
 
   // RULE 3: Pacing interval between dynamic events (at least 120 seconds)
-  if (ctx.timeSinceLastEventSec < 120) {
-    return { canAct: false, reason: `Intervalo de ritmo respeitado (${ctx.timeSinceLastEventSec}s / 120s). O diretor decide não intervir agora.` };
+  if (ctx.timeSinceLastEventSec < 75) {
+    return { canAct: false, reason: `Intervalo de ritmo respeitado (${ctx.timeSinceLastEventSec}s / 75s). O diretor decide não intervir agora.` };
   }
 
   return { canAct: true, reason: 'Janela de ritmo e tensão adequada para intervenção narrativa.' };
@@ -353,20 +353,52 @@ export function executeDirectorIntent(
     }
 
     case 'request_microadventure': {
-      const advId = payload.adventureId;
-      if (state.activeMicroAdventureId) {
-        decision.validation = { approved: false, reason: 'Já existe uma microaventura ativa no momento.' };
-      } else {
-        const started = startMicroAdventure(state, advId);
-        if (started.success) {
-          decision.validation = { approved: true, reason: started.log };
-          decision.narrativeLog = started.log;
-          mem.lastEventTimestamp = now;
-          mem.tension = Math.min(80, mem.tension + 10);
-        } else {
-          decision.validation = { approved: false, reason: started.log || 'ID de microaventura não encontrado.' };
-        }
+      const advId =
+        String(
+          payload.adventureId ||
+          ''
+        );
+
+      const adventure =
+        MICRO_ADVENTURES[
+          advId
+        ];
+
+      if (!adventure) {
+        decision.validation = {
+          approved: false,
+          reason:
+            'Contrato sugerido n?o existe.'
+        };
+
+        break;
       }
+
+      const logText =
+        '?? Novo contrato dispon?vel no Di?rio: ' +
+        adventure.title +
+        '. ' +
+        adventure.hookNpcDialogue;
+
+      state.logs.push(
+        entry(
+          logText,
+          'gm'
+        )
+      );
+
+      decision.validation = {
+        approved: true,
+        reason:
+          'Contrato oferecido ao jogador. A engine aguardar? aceita??o expl?cita antes de iniciar a atividade.'
+      };
+
+      decision.narrativeLog =
+        logText;
+
+      mem.lastEventTimestamp =
+        now;
+
       break;
     }
 

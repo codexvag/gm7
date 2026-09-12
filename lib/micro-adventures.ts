@@ -51,7 +51,7 @@ export const MICRO_ADVENTURES: Record<string, MicroAdventure> = {
     title: 'A Ameaça da Ponte Leste',
     subtitle: 'Microaventura 1 • Duração: 10-15 minutos',
     estimatedMinutes: 12,
-    locationIndex: 0, // Vila do Rio Verde
+    locationIndex: 1, // Ponte leste / borda da Floresta
     hookNpcId: 'doran',
     hookNpcName: 'Ancião Doran',
     hookNpcDialogue:
@@ -337,6 +337,233 @@ export const MICRO_ADVENTURES: Record<string, MicroAdventure> = {
     },
     dialogueVictory:
       'A vanguarda dracônica foi exterminada! A passagem para a Cratera Magmática e o Covil de Ignisrax está desobstruída. O mundo retém a respiração para a batalha que decidirá o destino de Valdoria!'
+  },
+
+  'caravan-under-ash': {
+    id: 'caravan-under-ash',
+    title: 'A Caravana Sob Cinzas',
+    subtitle: 'Contrato Din?mico ? Dura??o: 15-20 minutos',
+    estimatedMinutes: 18,
+    locationIndex: 1,
+    requiredFlags: ['trade_route_open'],
+    hookNpcId: 'kaelen',
+    hookNpcName: 'Capit?o Kaelen',
+    hookNpcDialogue:
+      'Uma caravana que deveria chegar ao entardecer desapareceu na estrada da floresta. Rastros de luta e marcas de garras foram encontrados perto da ponte velha.',
+    stages: [
+      {
+        stageIndex: 0,
+        name: 'In?cio: Estrada Silenciosa',
+        objective: 'Seguir a rota comercial e procurar os mercadores desaparecidos.',
+        dialogueNarrative:
+          'Caixas quebradas e marcas de rodas terminam abruptamente entre as ?rvores. Nenhuma ave canta nas proximidades.'
+      },
+      {
+        stageIndex: 1,
+        name: 'Meio: Ataque ? Caravana',
+        objective: 'Eliminar os saqueadores e predadores que cercaram os sobreviventes.',
+        dialogueNarrative:
+          'Gritos ecoam al?m da curva. Homens cobertos de fuligem e feras corrompidas avan?am contra os ?ltimos guardas.',
+        spawnEnemies: [
+          {
+            name: 'Saqueador das Cinzas',
+            hp: 18,
+            maxHp: 18,
+            ac: 13,
+            attack: 5,
+            damage: '1d8+2',
+            weapon: 'Machado de Saqueador',
+            x: 8,
+            y: 5
+          },
+          {
+            name: 'Lobo das Sombras',
+            hp: 13,
+            maxHp: 13,
+            ac: 12,
+            attack: 4,
+            damage: '1d6+2',
+            weapon: 'Mordida Sombria',
+            x: 9,
+            y: 4
+          }
+        ]
+      },
+      {
+        stageIndex: 2,
+        name: 'Fim: Mercadorias Recuperadas',
+        objective: 'Escoltar os sobreviventes de volta ? estrada comercial.',
+        dialogueNarrative:
+          'Os mercadores recolhem o que restou das carro?as e juram espalhar o nome dos aventureiros pelas rotas de Valdoria.'
+      }
+    ],
+    rewards: {
+      xp: 180,
+      gold: 70,
+      items: ['pocao-cura'],
+      titleReward: 'Protetor das Caravanas'
+    },
+    worldConsequences: {
+      caravans_protected: true,
+      trade_route_stable: true
+    },
+    dialogueVictory:
+      'A caravana foi salva. Mercadores retornam ? Vila e a circula??o de suprimentos melhora.'
+  },
+
+  'echoes-of-the-void': {
+    id: 'echoes-of-the-void',
+    title: 'Ecos Depois de Malakor',
+    subtitle: 'Contrato de P?s-Malakor ? Dura??o: 20-25 minutos',
+    estimatedMinutes: 22,
+    locationIndex: 3,
+    requiredFlags: ['malakor_defeated'],
+    hookNpcId: 'doran',
+    hookNpcName: 'Anci?o Doran',
+    hookNpcDialogue:
+      'Malakor caiu, mas o Vazio deixou cicatrizes. Vozes voltaram a ecoar nas c?maras inferiores e s?mbolos apagados come?aram a brilhar novamente.',
+    stages: [
+      {
+        stageIndex: 0,
+        name: 'In?cio: Retorno ?s Profundezas',
+        objective: 'Investigar a nova atividade arcana nas Catacumbas.',
+        dialogueNarrative:
+          'As antigas inscri??es tremeluzem nas paredes. O sil?ncio de antes foi substitu?do por um murm?rio imposs?vel de localizar.'
+      },
+      {
+        stageIndex: 1,
+        name: 'Meio: Ruptura Residual',
+        objective: 'Destruir os ecos do Vazio antes que formem um novo n?cleo de corrup??o.',
+        dialogueNarrative:
+          'Uma fenda violeta se abre no ar. Formas espectrais e escribas deformados emergem ao redor dos tr?s selos.',
+        spawnEnemies: [
+          {
+            name: 'Eco do Vazio',
+            hp: 28,
+            maxHp: 28,
+            ac: 14,
+            attack: 6,
+            damage: '2d6+2',
+            weapon: 'Toque do Vazio',
+            x: 9,
+            y: 4
+          },
+          {
+            name: 'Escriba Sombrio',
+            hp: 18,
+            maxHp: 18,
+            ac: 12,
+            attack: 5,
+            damage: '1d8+2',
+            weapon: 'Rajada R?nica',
+            x: 11,
+            y: 5
+          },
+          {
+            name: 'Guardi?o Espectral',
+            hp: 25,
+            maxHp: 25,
+            ac: 15,
+            attack: 5,
+            damage: '1d8+3',
+            weapon: 'Escudo Espectral',
+            x: 7,
+            y: 5
+          }
+        ]
+      },
+      {
+        stageIndex: 2,
+        name: 'Fim: Selos Estabilizados',
+        objective: 'Selar a ruptura residual.',
+        dialogueNarrative:
+          'A ?ltima chama violeta se apaga. Pela primeira vez em muito tempo, as Catacumbas parecem realmente silenciosas.'
+      }
+    ],
+    rewards: {
+      xp: 380,
+      gold: 110,
+      items: ['medalhao-obsidiana', 'pocao-cura-maior'],
+      titleReward: 'Selador do Vazio'
+    },
+    worldConsequences: {
+      void_echoes_suppressed: true,
+      catacombs_stable: true
+    },
+    dialogueVictory:
+      'Os ecos residuais de Malakor foram suprimidos e os tr?s selos voltaram a estabilizar as profundezas.'
+  },
+
+  'embers-after-ignisrax': {
+    id: 'embers-after-ignisrax',
+    title: 'Brasas Depois do Drag?o',
+    subtitle: 'Endgame ? Dura??o: 25-30 minutos',
+    estimatedMinutes: 28,
+    locationIndex: 5,
+    requiredFlags: ['campaign_completed'],
+    hookNpcId: 'kaelen',
+    hookNpcName: 'Capit?o Kaelen',
+    hookNpcDialogue:
+      'Ignisrax morreu, mas criaturas atra?das pelo calor do antigo covil est?o disputando a cratera. Se ningu?m agir, uma nova amea?a ocupar? o territ?rio.',
+    stages: [
+      {
+        stageIndex: 0,
+        name: 'In?cio: Cratera Sem Rei',
+        objective: 'Retornar ao antigo covil e avaliar quem tomou o territ?rio.',
+        dialogueNarrative:
+          'A cratera j? n?o pertence ao drag?o, mas continua viva. Novos rugidos reverberam entre as paredes de basalto.'
+      },
+      {
+        stageIndex: 1,
+        name: 'Meio: Disputa pelo Covil',
+        objective: 'Eliminar os monstros que tentam transformar a cratera em seu novo dom?nio.',
+        dialogueNarrative:
+          'Magma se ergue como uma criatura viva enquanto um draconiano remanescente protege uma pilha de rel?quias roubadas.',
+        spawnEnemies: [
+          {
+            name: 'Elemental de Magma',
+            hp: 40,
+            maxHp: 40,
+            ac: 15,
+            attack: 7,
+            damage: '2d8+3',
+            weapon: 'Punho de Magma',
+            x: 9,
+            y: 4
+          },
+          {
+            name: 'Draconiano Remanescente',
+            hp: 30,
+            maxHp: 30,
+            ac: 15,
+            attack: 6,
+            damage: '1d10+3',
+            weapon: 'Lan?a Vulc?nica',
+            x: 7,
+            y: 6
+          }
+        ]
+      },
+      {
+        stageIndex: 2,
+        name: 'Fim: Guardi?es do Endgame',
+        objective: 'Recuperar as rel?quias e impedir que outra criatura reivindique o covil.',
+        dialogueNarrative:
+          'As brasas diminuem. O lugar continua perigoso, mas os aventureiros agora s?o reconhecidos como guardi?es da regi?o.'
+      }
+    ],
+    rewards: {
+      xp: 650,
+      gold: 180,
+      items: ['escama-dragao-rubro', 'pocao-cura-maior'],
+      titleReward: 'Guardi?o da Cratera'
+    },
+    worldConsequences: {
+      crater_patrolled: true,
+      endgame_hunt_completed: true
+    },
+    dialogueVictory:
+      'O antigo territ?rio de Ignisrax foi estabilizado mais uma vez. Novas ca?adas ainda poder?o surgir no futuro.'
   }
 };
 

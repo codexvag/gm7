@@ -1,6 +1,104 @@
 // components/game/tactical-map.tsx
 'use client';
 
+import {
+  getCreatureProfile
+} from '@/lib/creature-profiles';
+
+
+function getEnemyTokenVisual(
+  name: string
+) {
+  const profile =
+    getCreatureProfile(
+      name
+    );
+
+  if (
+    profile.aiStyle ===
+    'dragon'
+  ) {
+    return {
+      glyph:
+        profile.tokenGlyph ||
+        '??',
+      bg:
+        'bg-gradient-to-br from-orange-500 via-red-800 to-black',
+      ring:
+        'ring-orange-400/90'
+    };
+  }
+
+  if (
+    profile.aiStyle ===
+    'boss'
+  ) {
+    return {
+      glyph:
+        profile.tokenGlyph ||
+        '??',
+      bg:
+        'bg-gradient-to-br from-purple-500 via-violet-950 to-black',
+      ring:
+        'ring-purple-400/90'
+    };
+  }
+
+  if (
+    profile.aiStyle ===
+    'caster'
+  ) {
+    return {
+      glyph:
+        profile.tokenGlyph ||
+        '??',
+      bg:
+        'bg-gradient-to-br from-violet-600 via-indigo-950 to-black',
+      ring:
+        'ring-violet-400/80'
+    };
+  }
+
+  if (
+    profile.aiStyle ===
+    'skirmisher'
+  ) {
+    return {
+      glyph:
+        profile.tokenGlyph ||
+        '??',
+      bg:
+        'bg-gradient-to-br from-zinc-500 via-slate-800 to-black',
+      ring:
+        'ring-slate-300/80'
+    };
+  }
+
+  if (
+    profile.aiStyle ===
+    'guardian'
+  ) {
+    return {
+      glyph:
+        profile.tokenGlyph ||
+        '???',
+      bg:
+        'bg-gradient-to-br from-stone-500 via-zinc-900 to-black',
+      ring:
+        'ring-stone-300/80'
+    };
+  }
+
+  return {
+    glyph:
+      profile.tokenGlyph ||
+      '??',
+    bg:
+      'bg-gradient-to-br from-red-700 via-red-950 to-black',
+    ring:
+      'ring-red-500/80'
+  };
+}
 
 function DndTokens({
   displayHeroes,
@@ -185,6 +283,7 @@ function DndTokens({
         const topPerc = (enemy.y / gridSize) * 100;
         const sizePerc = 100 / gridSize;
         const recoilStyle = getRecoilStyle(enemy.id);
+        const visual = getEnemyTokenVisual(enemy.name);
 
         return (
           <div key={enemy.id}
@@ -200,7 +299,7 @@ function DndTokens({
                    onTargetEnemy(enemy.id);
                  }
                }}>
-            <div style={recoilStyle} className={`relative w-[85%] h-[85%] max-w-[42px] max-h-[42px] rounded-full flex flex-col items-center justify-center cursor-pointer shadow-[0_4px_10px_rgba(0,0,0,0.6)] token-human-sway ${isActiveTurn ? 'ring-4 ring-red-500 ring-offset-2 ring-offset-black scale-115 shadow-[0_0_25px_rgba(239,68,68,0.9)] token-target-pulse' : isSelected ? 'ring-2 ring-red-500 ring-offset-1 ring-offset-black scale-110 token-target-pulse' : isTargeted ? 'ring-2 ring-amber-400/80 ring-offset-1 ring-offset-black scale-105 animate-pulse' : 'ring-[1.5px] ring-red-700/80 hover:scale-105'} bg-gradient-to-br from-red-900 via-red-950 to-zinc-950 transition-transform ${statusClasses}`}>
+            <div style={recoilStyle} className={`relative w-[85%] h-[85%] max-w-[42px] max-h-[42px] rounded-full flex flex-col items-center justify-center cursor-pointer shadow-[0_4px_10px_rgba(0,0,0,0.6)] token-human-sway ${isActiveTurn ? 'ring-4 ring-red-500 ring-offset-2 ring-offset-black scale-115 shadow-[0_0_25px_rgba(239,68,68,0.9)] token-target-pulse' : isSelected ? 'ring-2 ring-red-500 ring-offset-1 ring-offset-black scale-110 token-target-pulse' : isTargeted ? 'ring-2 ring-amber-400/80 ring-offset-1 ring-offset-black scale-105 animate-pulse' : 'ring-[1.5px] ring-red-700/80 hover:scale-105'} ${visual.bg} ${visual.ring} transition-transform ${statusClasses}`}>
               <div className="absolute inset-[1px] rounded-full border border-red-500/30 pointer-events-none" />
               {isActiveTurn && <div className="absolute -inset-2 rounded-full border-2 border-red-500 animate-ping opacity-60 pointer-events-none" />}
               {isActiveTurn && <div className="absolute -bottom-3.5 left-1/2 -translate-x-1/2 bg-red-600 text-white font-black text-[8px] px-1.5 rounded-full uppercase tracking-wider shadow-lg z-30 animate-pulse pointer-events-none whitespace-nowrap">VEZ</div>}
@@ -228,7 +327,7 @@ function DndTokens({
                 </div>
               )}
               {isTargeted && <div className="absolute inset-0 rounded-full border-2 border-dashed border-amber-400/70 animate-spin-slow pointer-events-none z-15" />}
-              <span className="font-serif font-black text-sm text-red-200 drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">{enemy.name[0]}</span>
+              <span className="font-serif font-black text-sm text-red-200 drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">{visual.glyph}</span>
             </div>
           </div>
         );

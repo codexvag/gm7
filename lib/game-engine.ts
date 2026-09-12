@@ -455,6 +455,12 @@ export type Character = {
   activeMicroAdventureId?: string;
   updatedAt?: number;
   lastSeen?: number;
+  hitDiceSpent?: number;
+  lastShortRestAt?: number;
+  lastLongRestAt?: number;
+  activeMicroAdventureStage?: number;
+  adventureCompletions?: Record<string, number>;
+  adventureCooldowns?: Record<string, number>;
 };
 
 export type PartyInvite = {
@@ -485,6 +491,7 @@ export type Enemy = {
   partyId?: string;
   ownerCharId?: string;
   updatedAt?: number;
+  adventureId?: string;
 };
 
 export type Log = {
@@ -1237,21 +1244,42 @@ export function spendSpellSlot(c: Character, level: number): boolean {
  * Executa cura de descanso curto gastando Dado de Vida da classe
  */
 export function shortRestHeal(c: Character): { healed: number; rollText: string } {
+  const spent = c.hitDiceSpent || 0;
+  const available = Math.max(0, (c.level || 1) - spent);
+
+  if (available <= 0) {
+    return {
+      healed: 0,
+      rollText: 'n?o possui mais Dados de Vida dispon?veis at? concluir um Descanso Longo'
+    };
+  }
+
   const classTuple = classes.find((cl) => cl[0] === c.className);
   const hitDieSides = classTuple ? classTuple[1] : 8;
   const conBonus = mod(c.stats[2]);
   const dieRoll = die(hitDieSides);
   const totalHealed = Math.max(1, dieRoll + conBonus);
   const oldHp = c.hp;
+
+  c.hitDiceSpent = spent + 1;
   c.hp = Math.min(c.maxHp, c.hp + totalHealed);
+
   const actualHealed = c.hp - oldHp;
-  const rollText = `1d${hitDieSides} [${dieRoll}] ${signed(conBonus)} = recuperou ${actualHealed} PV (${c.hp}/${c.maxHp})`;
-  return { healed: actualHealed, rollText };
+  const remaining = Math.max(
+    0,
+    (c.level || 1) - (c.hitDiceSpent || 0)
+  );
+
+  return {
+    healed: actualHealed,
+    rollText:
+      `gastou 1d${hitDieSides} [${dieRoll}] ${signed(conBonus)} = recuperou ${actualHealed} PV (${c.hp}/${c.maxHp}). Dados de Vida restantes: ${remaining}`
+  };
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
+// ================================================================================
 // TACTICAL COMBAT POSITIONING & SERVER-SIDE SPATIAL VALIDATION ENGINE
-// ════════════════════════════════════════════════════════════════════════════════
+// ================================================================================
 
 /**
  * Tactical grid distance (D&D 5e Chebyshev metric where diagonals cost 1 square)

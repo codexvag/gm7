@@ -2409,40 +2409,427 @@ export async function POST(req: NextRequest) {
       case 'heartbeat': {
         if (c) {
           touchChar(c);
+
+          reconcileLegacyProgression(
+            s,
+            c
+          );
         }
-        // Periodic SandboxDirector evaluation (non-intrusive, bounded narrative)
+
         try {
-          const ctx = readCompactWorldContext(s, r.id);
-          const pacing = evaluateDirectorPacing(ctx, r.id);
-          if (pacing.canAct) {
-            const rollChoice = Math.random();
-            if (rollChoice < 0.35) {
-              const requestedMult = 0.90 + Math.random() * 0.25;
+          const ctx =
+            readCompactWorldContext(
+              s,
+              r.id
+            );
+
+          const pacing =
+            evaluateDirectorPacing(
+              ctx,
+              r.id
+            );
+
+          if (
+            pacing.canAct &&
+            !s.combat
+          ) {
+            const hero = c;
+
+            const rollChoice =
+              Math.random();
+
+            const heroBiome =
+              hero?.biome ||
+              s.biome ||
+              'village';
+
+            const scopedEnemies =
+              hero
+                ? (
+                    s.enemies ||
+                    []
+                  ).filter(
+                    (enemy) => {
+                      if (
+                        enemy.hp <= 0
+                      ) {
+                        return false;
+                      }
+
+                      if (
+                        enemy.biome !==
+                        heroBiome
+                      ) {
+                        return false;
+                      }
+
+                      if (
+                        hero.partyId
+                      ) {
+                        return (
+                          enemy.partyId ===
+                          hero.partyId
+                        );
+                      }
+
+                      return (
+                        enemy.ownerCharId ===
+                        hero.id
+                      );
+                    }
+                  )
+                : [];
+
+            const canSpawn =
+              Boolean(
+                hero &&
+                heroBiome !==
+                  'village' &&
+                !hero
+                  .activeMicroAdventureId &&
+                scopedEnemies.length ===
+                  0
+              );
+
+            if (
+              canSpawn &&
+              rollChoice < 0.30
+            ) {
+              const byBiome: Record<
+                string,
+                string[]
+              > = {
+                forest: [
+                  'Lobo das Sombras',
+                  'Batedor Sombrio',
+                  'Lobo Alfa das Cinzas'
+                ],
+
+                ruins: [
+                  'Arqueiro do Culto',
+                  'Ac?lito do Fogo Negro',
+                  'Saqueador das Cinzas'
+                ],
+
+                dungeon: [
+                  'Eco do Vazio',
+                  'Guardi?o Espectral',
+                  'Escriba Sombrio'
+                ],
+
+                canyon: [
+                  'Draconiano da Fenda',
+                  'Wyrmling Errante'
+                ],
+
+                lair: [
+                  'Elemental de Magma',
+                  'Sentinela de Obsidiana'
+                ]
+              };
+
+              const table =
+                byBiome[
+                  heroBiome
+                ] ||
+                byBiome.forest;
+
+              const creature =
+                table[
+                  Math.floor(
+                    Math.random() *
+                    table.length
+                  )
+                ];
+
+              const oldIds =
+                new Set(
+                  s.enemies.map(
+                    (enemy) =>
+                      enemy.id
+                  )
+                );
+
+              const tier =
+                hero!.level >= 5
+                  ? 3
+                  : hero!.level >= 3
+                    ? 2
+                    : 1;
+
+              const result =
+                executeDirectorIntent(
+                  'request_creature_spawn',
+                  {
+                    creatureName:
+                      creature,
+                    tier,
+                    reason:
+                      'Amea?a emergente coerente com a regi?o e o ritmo do mundo.'
+                  },
+                  s,
+                  r.id
+                );
+
+              if (
+                result.validation
+                  .approved
+              ) {
+                const spawned =
+                  [...s.enemies]
+                    .reverse()
+                    .find(
+                      (enemy) =>
+                        !oldIds.has(
+                          enemy.id
+                        )
+                    );
+
+                if (
+                  spawned &&
+                  hero
+                ) {
+                  spawned.biome =
+                    heroBiome as any;
+
+                  if (
+                    hero.partyId
+                  ) {
+                    spawned.partyId =
+                      hero.partyId;
+
+                    spawned.ownerCharId =
+                      undefined;
+                  } else {
+                    spawned.ownerCharId =
+                      hero.id;
+
+                    spawned.partyId =
+                      undefined;
+                  }
+
+                  spawned.x =
+                    Math.max(
+                      0,
+                      Math.min(
+                        15,
+                        hero.x + 4
+                      )
+                    );
+
+                  spawned.y =
+                    Math.max(
+                      0,
+                      Math.min(
+                        15,
+                        hero.y + 2
+                      )
+                    );
+
+                  touchChar(
+                    spawned
+                  );
+                }
+              }
+            } else if (
+              hero &&
+              !hero
+                .activeMicroAdventureId &&
+              rollChoice < 0.48
+            ) {
+              const oldNpcIds =
+                new Set(
+                  (
+                    s.npcs ||
+                    []
+                  ).map(
+                    (npc) =>
+                      npc.id
+                  )
+                );
+
+              const names =
+                heroBiome ===
+                  'village'
+                  ? [
+                      'Mercador Errante',
+                      'Batedora da Fronteira',
+                      'Mensageiro de Valdoria'
+                    ]
+                  : [
+                      'Explorador Ferido',
+                      'Ca?adora Errante',
+                      'Cart?grafo Perdido'
+                    ];
+
+              const name =
+                names[
+                  Math.floor(
+                    Math.random() *
+                    names.length
+                  )
+                ];
+
+              const result =
+                executeDirectorIntent(
+                  'request_temporary_npc',
+                  {
+                    name,
+                    role:
+                      'NPC de Evento',
+                    description:
+                      'Uma presen?a tempor?ria ligada aos acontecimentos recentes da regi?o.',
+                    reason:
+                      'Criar oportunidade social e sensa??o de mundo persistente.'
+                  },
+                  s,
+                  r.id
+                );
+
+              if (
+                result.validation
+                  .approved &&
+                hero
+              ) {
+                const npc =
+                  [...(
+                    s.npcs ||
+                    []
+                  )]
+                    .reverse()
+                    .find(
+                      (candidate) =>
+                        !oldNpcIds.has(
+                          candidate.id
+                        )
+                    );
+
+                if (npc) {
+                  npc.biome =
+                    heroBiome as any;
+
+                  npc.x =
+                    Math.max(
+                      0,
+                      Math.min(
+                        15,
+                        hero.x + 2
+                      )
+                    );
+
+                  npc.y =
+                    Math.max(
+                      0,
+                      Math.min(
+                        15,
+                        hero.y + 1
+                      )
+                    );
+                }
+              }
+            } else if (
+              rollChoice < 0.64
+            ) {
               executeDirectorIntent(
                 'influence_economy',
-                { multiplier: requestedMult, reason: 'Ajuste orgânico de comércio e rotas de suprimentos' },
+                {
+                  multiplier:
+                    Math.random() >
+                      0.5
+                      ? 1.10
+                      : 0.94,
+                  reason:
+                    'Caravanas, conflitos e atividade regional alteraram temporariamente o com?rcio.'
+                },
                 s,
                 r.id
               );
-            } else if (rollChoice < 0.70) {
-              const critters: ('lobos_rastros' | 'cervos' | 'corvos')[] = ['cervos', 'corvos', 'lobos_rastros'];
-              const picked = critters[Math.floor(Math.random() * critters.length)];
-              executeDirectorIntent('adjust_ecosystem', { critterType: picked, reason: 'Ritmo da fauna do bioma' }, s, r.id);
+            } else if (
+              rollChoice < 0.82
+            ) {
+              const critters:
+                (
+                  | 'lobos_rastros'
+                  | 'cervos'
+                  | 'corvos'
+                )[] = [
+                  'cervos',
+                  'corvos',
+                  'lobos_rastros'
+                ];
+
+              executeDirectorIntent(
+                'adjust_ecosystem',
+                {
+                  critterType:
+                    critters[
+                      Math.floor(
+                        Math.random() *
+                        critters.length
+                      )
+                    ],
+                  reason:
+                    'A fauna responde aos acontecimentos recentes do mundo.'
+                },
+                s,
+                r.id
+              );
             } else {
-              const envEvents = [
-                'Nuvens baixas cobrem o topo das árvores e o ar fica carregado de eletricidade.',
-                'O som de um sino distante ecoa pelas montanhas, lembrando os heróis da antiga vigília de Valdoria.',
-                'Uma brisa morna sopra cinzas leves que dançam no ar antes de tocar o chão.'
-              ];
-              const pickedText = envEvents[Math.floor(Math.random() * envEvents.length)];
-              executeDirectorIntent('request_environmental_event', { text: pickedText }, s, r.id);
+              const endgame =
+                Boolean(
+                  hero
+                    ?.questProgress
+                    ?.campaign_completed
+                );
+
+              const events =
+                endgame
+                  ? [
+                      'O quadro de contratos da Vila recebe novos pedidos de ca?adores, mercadores e estudiosos.',
+                      'Rumores indicam que criaturas est?o tentando ocupar territ?rios deixados vazios ap?s a queda de Ignisrax.',
+                      'Uma patrulha relata atividade incomum nas antigas rotas do culto e oferece recompensa por investiga??o.'
+                    ]
+                  : heroBiome ===
+                      'village'
+                    ? [
+                        'Uma caravana entra na pra?a trazendo not?cias de regi?es distantes.',
+                        'Os sinos da guarda anunciam movimento incomum nas estradas.',
+                        'Mercadores discutem rumores sobre criaturas migrando entre regi?es.'
+                      ]
+                    : [
+                        'Pegadas recentes cruzam a trilha e desaparecem fora do caminho principal.',
+                        'Um som distante quebra o sil?ncio, sugerindo atividade al?m do campo de vis?o.',
+                        'A fauna abandona a ?rea repentinamente, como se algo maior estivesse se aproximando.'
+                      ];
+
+              executeDirectorIntent(
+                'request_environmental_event',
+                {
+                  text:
+                    events[
+                      Math.floor(
+                        Math.random() *
+                        events.length
+                      )
+                    ],
+                  reason:
+                    'Evento emergente do mundo persistente.'
+                },
+                s,
+                r.id
+              );
             }
           }
         } catch (err) {
-          console.warn('[SandboxDirector Heartbeat Evaluation]', err);
+          console.warn(
+            '[SandboxDirector Heartbeat Evaluation]',
+            err
+          );
         }
+
         break;
       }
+
       default:
         throw Error('AÃ§Ã£o desconhecida.');
     }
@@ -2603,71 +2990,906 @@ function advance(s: State) {
   s.movementUsed = 0;
 }
 
-function executeSingleEnemyRevenge(enemy: Enemy, attacker: Character, s: State) {
-  if (enemy.hp <= 0 || attacker.hp <= 0) return;
-  const dist = Math.max(Math.abs(attacker.x - enemy.x), Math.abs(attacker.y - enemy.y));
-  if (dist > 1) {
-    const nextX = enemy.x + Math.sign(attacker.x - enemy.x);
-    const nextY = enemy.y + Math.sign(attacker.y - enemy.y);
-    if (nextX >= 0 && nextX <= 15 && nextY >= 0 && nextY <= 15) {
-      enemy.x = nextX;
-      enemy.y = nextY;
-      touchChar(enemy);
+function executeSingleEnemyRevenge(
+  enemy: Enemy,
+  attacker: Character,
+  s: State
+) {
+  if (
+    enemy.hp <= 0 ||
+    attacker.hp <= 0
+  ) {
+    return;
+  }
+
+  const profile =
+    getCreatureProfile(
+      enemy.name
+    );
+
+  const distance = () =>
+    Math.max(
+      Math.abs(
+        attacker.x -
+        enemy.x
+      ),
+      Math.abs(
+        attacker.y -
+        enemy.y
+      )
+    );
+
+  let dist =
+    distance();
+
+  // Ranged creatures attempt to keep some distance.
+  if (
+    profile.attackRange > 1 &&
+    dist <= 1
+  ) {
+    for (
+      let i = 0;
+      i <
+      Math.min(
+        2,
+        profile.moveSquares
+      );
+      i++
+    ) {
+      const nx =
+        enemy.x -
+        Math.sign(
+          attacker.x -
+          enemy.x
+        );
+
+      const ny =
+        enemy.y -
+        Math.sign(
+          attacker.y -
+          enemy.y
+        );
+
+      if (
+        nx < 0 ||
+        nx > 15 ||
+        ny < 0 ||
+        ny > 15
+      ) {
+        break;
+      }
+
+      enemy.x = nx;
+      enemy.y = ny;
     }
+
+    touchChar(enemy);
+  } else if (
+    dist >
+    profile.attackRange
+  ) {
+    const steps =
+      Math.min(
+        profile.moveSquares,
+        Math.max(
+          0,
+          dist -
+          profile.attackRange
+        )
+      );
+
+    for (
+      let i = 0;
+      i < steps;
+      i++
+    ) {
+      const nx =
+        enemy.x +
+        Math.sign(
+          attacker.x -
+          enemy.x
+        );
+
+      const ny =
+        enemy.y +
+        Math.sign(
+          attacker.y -
+          enemy.y
+        );
+
+      if (
+        nx < 0 ||
+        nx > 15 ||
+        ny < 0 ||
+        ny > 15
+      ) {
+        break;
+      }
+
+      enemy.x = nx;
+      enemy.y = ny;
+    }
+
+    touchChar(enemy);
   }
-  const revengeDist = Math.max(Math.abs(attacker.x - enemy.x), Math.abs(attacker.y - enemy.y));
-  if (revengeDist <= 1) {
-    const counterLog = attack(enemy, attacker);
-    s.logs.push(entry(`⚡ [Reação Imediata do Inimigo] ${counterLog}`, 'roll'));
-    touchChar(attacker);
+
+  dist =
+    distance();
+
+  if (
+    dist >
+    profile.attackRange
+  ) {
+    s.logs.push(
+      entry(
+        enemy.name +
+          ' se reposiciona, buscando alcance para ' +
+          profile.attackName +
+          '.',
+        'roll'
+      )
+    );
+
+    return;
   }
+
+  const result =
+    resolveAttack(
+      {
+        name:
+          enemy.name +
+          ' ? ' +
+          profile.attackName,
+        attack:
+          enemy.attack,
+        damage:
+          enemy.damage,
+        conditions:
+          enemy.conditions || [],
+        weapon:
+          enemy.weapon ||
+          profile.attackName
+      },
+      {
+        id:
+          attacker.id,
+        name:
+          attacker.name,
+        ac:
+          attacker.ac,
+        hp:
+          attacker.hp,
+        conditions:
+          attacker.conditions
+      },
+      'normal',
+      profile.attackRange > 1
+    );
+
+  attacker.hp =
+    result.hpAfter;
+
+  touchChar(attacker);
+
+  s.logs.push(
+    entry(
+      '? ' +
+        result.text,
+      'roll'
+    )
+  );
 }
 
 function executeEnemyAI(s: State) {
   let safety = 0;
-  const attackedTargets = new Set<string>(); // Track who was already attacked this round for target distribution
-  while (s.combat && safety < 10) {
+
+  const attackedTargets =
+    new Set<string>();
+
+  const distance = (
+    a: {
+      x: number;
+      y: number;
+    },
+    b: {
+      x: number;
+      y: number;
+    }
+  ) =>
+    Math.max(
+      Math.abs(
+        a.x - b.x
+      ),
+      Math.abs(
+        a.y - b.y
+      )
+    );
+
+  const moveRelative = (
+    enemy: Enemy,
+    target: Character,
+    toward: boolean,
+    steps: number
+  ) => {
+    for (
+      let i = 0;
+      i < steps;
+      i++
+    ) {
+      const sx =
+        Math.sign(
+          target.x -
+          enemy.x
+        );
+
+      const sy =
+        Math.sign(
+          target.y -
+          enemy.y
+        );
+
+      const nx =
+        toward
+          ? enemy.x + sx
+          : enemy.x - sx;
+
+      const ny =
+        toward
+          ? enemy.y + sy
+          : enemy.y - sy;
+
+      if (
+        nx < 0 ||
+        nx > 15 ||
+        ny < 0 ||
+        ny > 15
+      ) {
+        break;
+      }
+
+      enemy.x = nx;
+      enemy.y = ny;
+    }
+
+    touchChar(enemy);
+  };
+
+  while (
+    s.combat &&
+    safety < 20
+  ) {
     safety++;
-    const curId = s.order[s.turn];
-    if (!curId) break;
-    const enemy = s.enemies.find((e) => e.id === curId && e.hp > 0);
-    if (!enemy) break;
-    const enemyBiome = enemy.biome || 'village';
-    const activeHeroes = s.characters.filter((c) => c.hp > 0 && (c.biome || 'village') === enemyBiome && s.order.includes(c.id));
-    if (activeHeroes.length === 0) {
+
+    const currentId =
+      s.order[s.turn];
+
+    if (!currentId) {
+      break;
+    }
+
+    const enemy =
+      s.enemies.find(
+        (candidate) =>
+          candidate.id ===
+            currentId &&
+          candidate.hp > 0
+      );
+
+    if (!enemy) {
+      break;
+    }
+
+    const profile =
+      getCreatureProfile(
+        enemy.name
+      );
+
+    const biome =
+      enemy.biome ||
+      'village';
+
+    const heroes =
+      s.characters.filter(
+        (hero) => {
+          if (
+            hero.hp <= 0
+          ) {
+            return false;
+          }
+
+          if (
+            !(s.order || [])
+              .includes(
+                hero.id
+              )
+          ) {
+            return false;
+          }
+
+          if (
+            (
+              hero.biome ||
+              'village'
+            ) !== biome
+          ) {
+            return false;
+          }
+
+          if (
+            enemy.partyId
+          ) {
+            return (
+              hero.partyId ===
+              enemy.partyId
+            );
+          }
+
+          if (
+            enemy.ownerCharId
+          ) {
+            return (
+              hero.id ===
+              enemy.ownerCharId
+            );
+          }
+
+          return true;
+        }
+      );
+
+    if (
+      heroes.length === 0
+    ) {
       s.combat = false;
-      s.combatPartyId = undefined;
+      s.combatPartyId =
+        undefined;
       s.actionUsed = false;
       s.movementUsed = 0;
       break;
     }
 
-    // Smart target selection: distribute attacks among heroes in the same combat and biome
-    const notYetAttacked = activeHeroes.filter((h) => !attackedTargets.has(h.id));
-    const candidates = notYetAttacked.length > 0 ? notYetAttacked : activeHeroes;
-    const target = candidates.sort((a, b) => {
-      const distA = Math.abs(a.x - enemy.x) + Math.abs(a.y - enemy.y);
-      const distB = Math.abs(b.x - enemy.x) + Math.abs(b.y - enemy.y);
-      return distA - distB;
-    })[0];
-    attackedTargets.add(target.id);
+    const notAttacked =
+      heroes.filter(
+        (hero) =>
+          !attackedTargets.has(
+            hero.id
+          )
+      );
 
-    const dist = Math.max(Math.abs(target.x - enemy.x), Math.abs(target.y - enemy.y));
-    if (dist > 1) {
-      const nextX = enemy.x + Math.sign(target.x - enemy.x);
-      const nextY = enemy.y + Math.sign(target.y - enemy.y);
-      if (nextX >= 0 && nextX <= 15 && nextY >= 0 && nextY <= 15) {
-        enemy.x = nextX;
-        enemy.y = nextY;
+    const candidates =
+      notAttacked.length
+        ? notAttacked
+        : heroes;
+
+    const target =
+      [...candidates]
+        .sort(
+          (a, b) => {
+            if (
+              profile.aiStyle ===
+              'boss'
+            ) {
+              const ah =
+                a.hp /
+                Math.max(
+                  1,
+                  a.maxHp
+                );
+
+              const bh =
+                b.hp /
+                Math.max(
+                  1,
+                  b.maxHp
+                );
+
+              if (ah !== bh) {
+                return ah - bh;
+              }
+            }
+
+            if (
+              profile.aiStyle ===
+                'caster' ||
+              profile.aiStyle ===
+                'dragon'
+            ) {
+              if (
+                a.ac !== b.ac
+              ) {
+                return (
+                  a.ac -
+                  b.ac
+                );
+              }
+            }
+
+            return (
+              distance(
+                enemy,
+                a
+              ) -
+              distance(
+                enemy,
+                b
+              )
+            );
+          }
+        )[0];
+
+    attackedTargets.add(
+      target.id
+    );
+
+    let dist =
+      distance(
+        enemy,
+        target
+      );
+
+    if (
+      profile.attackRange > 1 &&
+      dist <= 1
+    ) {
+      moveRelative(
+        enemy,
+        target,
+        false,
+        Math.min(
+          2,
+          profile.moveSquares
+        )
+      );
+    } else if (
+      dist >
+      profile.attackRange
+    ) {
+      moveRelative(
+        enemy,
+        target,
+        true,
+        Math.min(
+          profile.moveSquares,
+          Math.max(
+            0,
+            dist -
+              profile.attackRange
+          )
+        )
+      );
+    }
+
+    dist =
+      distance(
+        enemy,
+        target
+      );
+
+    const specialReady =
+      Boolean(
+        profile.specialKind &&
+        profile.specialKind !==
+          'none' &&
+        profile.specialEvery &&
+        s.round > 0 &&
+        s.round %
+          profile.specialEvery ===
+          0
+      );
+
+    let acted = false;
+
+    if (
+      specialReady &&
+      (
+        profile.specialKind ===
+          'breath' ||
+        profile.specialKind ===
+          'void_burst'
+      ) &&
+      profile.specialDamage
+    ) {
+      const specialRange =
+        profile.specialRange ||
+        4;
+
+      const targets =
+        heroes
+          .filter(
+            (hero) =>
+              distance(
+                enemy,
+                hero
+              ) <=
+              specialRange
+          )
+          .sort(
+            (a, b) =>
+              distance(
+                enemy,
+                a
+              ) -
+              distance(
+                enemy,
+                b
+              )
+          )
+          .slice(
+            0,
+            profile.aiStyle ===
+              'dragon'
+              ? 3
+              : 2
+          );
+
+      if (
+        targets.length > 0
+      ) {
+        const damage =
+          roll(
+            profile.specialDamage
+          ).total;
+
+        const dc =
+          profile.saveDc ||
+          13;
+
+        const results:
+          string[] =
+          [];
+
+        for (
+          const hero of
+          targets
+        ) {
+          const save =
+            d20().raw +
+            mod(
+              hero.stats[1]
+            );
+
+          const saved =
+            save >= dc;
+
+          const dealt =
+            saved
+              ? Math.floor(
+                  damage / 2
+                )
+              : damage;
+
+          hero.hp =
+            Math.max(
+              0,
+              hero.hp -
+                dealt
+            );
+
+          touchChar(hero);
+
+          results.push(
+            hero.name +
+              ': -' +
+              dealt +
+              ' PV' +
+              (
+                saved
+                  ? ' (salvou)'
+                  : ''
+              )
+          );
+        }
+
+        s.logs.push(
+          entry(
+            '?? ' +
+              enemy.name +
+              ' usa ' +
+              (
+                profile.specialName ||
+                'Ataque Especial'
+              ) +
+              '! CD ' +
+              dc +
+              ' DES. ' +
+              results.join(
+                ' ? '
+              ),
+            'roll'
+          )
+        );
+
+        acted = true;
       }
     }
-    const attackLog = attack(enemy, target);
-    s.logs.push(entry(attackLog, 'roll'));
+
+    if (
+      specialReady &&
+      !acted &&
+      profile.specialKind ===
+        'arcane' &&
+      profile.specialDamage &&
+      dist <=
+        (
+          profile.specialRange ||
+          profile.attackRange
+        )
+    ) {
+      const result =
+        resolveAttack(
+          {
+            name:
+              enemy.name +
+              ' ? ' +
+              (
+                profile.specialName ||
+                'Ataque Especial'
+              ),
+            attack:
+              enemy.attack +
+              1,
+            damage:
+              profile.specialDamage,
+            conditions:
+              enemy.conditions ||
+              [],
+            weapon:
+              profile.specialName
+          },
+          {
+            id:
+              target.id,
+            name:
+              target.name,
+            ac:
+              target.ac,
+            hp:
+              target.hp,
+            conditions:
+              target.conditions
+          },
+          'normal',
+          true
+        );
+
+      target.hp =
+        result.hpAfter;
+
+      touchChar(target);
+
+      s.logs.push(
+        entry(
+          result.text,
+          'roll'
+        )
+      );
+
+      acted = true;
+    }
+
+    if (
+      specialReady &&
+      !acted &&
+      profile.specialKind ===
+        'bash' &&
+      dist <= 1
+    ) {
+      const result =
+        resolveAttack(
+          {
+            name:
+              enemy.name +
+              ' ? ' +
+              (
+                profile.specialName ||
+                'Impacto'
+              ),
+            attack:
+              enemy.attack,
+            damage:
+              profile.specialDamage ||
+              enemy.damage,
+            conditions:
+              enemy.conditions ||
+              [],
+            weapon:
+              profile.specialName
+          },
+          {
+            id:
+              target.id,
+            name:
+              target.name,
+            ac:
+              target.ac,
+            hp:
+              target.hp,
+            conditions:
+              target.conditions
+          }
+        );
+
+      target.hp =
+        result.hpAfter;
+
+      if (
+        result.hit &&
+        target.hp > 0
+      ) {
+        const pushX =
+          target.x +
+          Math.sign(
+            target.x -
+            enemy.x
+          );
+
+        const pushY =
+          target.y +
+          Math.sign(
+            target.y -
+            enemy.y
+          );
+
+        if (
+          pushX >= 0 &&
+          pushX <= 15 &&
+          pushY >= 0 &&
+          pushY <= 15
+        ) {
+          target.x =
+            pushX;
+
+          target.y =
+            pushY;
+        }
+      }
+
+      touchChar(target);
+
+      s.logs.push(
+        entry(
+          result.text +
+            (
+              result.hit &&
+              target.hp > 0
+                ? ' O impacto empurra o alvo para tr?s.'
+                : ''
+            ),
+          'roll'
+        )
+      );
+
+      acted = true;
+    }
+
+    if (
+      !acted &&
+      dist <=
+        profile.attackRange
+    ) {
+      let mode:
+        'normal' |
+        'advantage' =
+        'normal';
+
+      if (
+        profile.aiStyle ===
+        'skirmisher'
+      ) {
+        const packMate =
+          s.enemies.some(
+            (other) =>
+              other.id !==
+                enemy.id &&
+              other.hp > 0 &&
+              other.biome ===
+                enemy.biome &&
+              distance(
+                other,
+                target
+              ) <= 1
+          );
+
+        if (packMate) {
+          mode =
+            'advantage';
+        }
+      }
+
+      const result =
+        resolveAttack(
+          {
+            name:
+              enemy.name +
+              ' ? ' +
+              profile.attackName,
+            attack:
+              enemy.attack,
+            damage:
+              enemy.damage,
+            conditions:
+              enemy.conditions ||
+              [],
+            weapon:
+              enemy.weapon ||
+              profile.attackName
+          },
+          {
+            id:
+              target.id,
+            name:
+              target.name,
+            ac:
+              target.ac,
+            hp:
+              target.hp,
+            conditions:
+              target.conditions
+          },
+          mode,
+          profile.attackRange > 1
+        );
+
+      target.hp =
+        result.hpAfter;
+
+      touchChar(target);
+
+      s.logs.push(
+        entry(
+          result.text,
+          'roll'
+        )
+      );
+
+      acted = true;
+
+      if (
+        profile.aiStyle ===
+          'skirmisher' &&
+        target.hp > 0
+      ) {
+        moveRelative(
+          enemy,
+          target,
+          false,
+          1
+        );
+      }
+    }
+
+    if (!acted) {
+      s.logs.push(
+        entry(
+          enemy.name +
+            ' se reposiciona para usar ' +
+            profile.attackName +
+            '.',
+          'roll'
+        )
+      );
+    }
+
+    if (
+      target.hp <= 0
+    ) {
+      s.logs.push(
+        entry(
+          '?? ' +
+            target.name +
+            ' caiu diante de ' +
+            enemy.name +
+            '.',
+          'gm'
+        )
+      );
+    }
+
     advance(s);
   }
+
   if (s.combat) {
     s.actionUsed = false;
     s.movementUsed = 0;
   }
 }
-
