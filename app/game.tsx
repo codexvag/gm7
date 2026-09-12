@@ -2133,8 +2133,11 @@ export default function Game() {
                       }
                       if (waypoints.length === 0) waypoints.push({ x, y });
 
-                      // 4. Authoritative WebSocket dispatch with REST fallback
-                      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                      // MMO: REST is authoritative and persists movement.
+                      // The server broadcasts HERO_MOVED after the database update.
+                      if (isMmoRoom) {
+                        void action({ action: 'move', character: heroId, x, y, waypoints, maxBound: curGrid - 1, gridSize: curGrid });
+                      } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                         wsRef.current.send(
                           JSON.stringify({
                             type: 'MOVE_PATH',
@@ -2179,8 +2182,19 @@ export default function Game() {
                         });
                       } catch {}
 
-                      // 4. Authoritative WebSocket dispatch to Cloudflare Durable Object
-                      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                      // MMO: REST is authoritative and persists movement.
+                      // The server broadcasts HERO_MOVED after the database update.
+                      if (isMmoRoom) {
+                        void action({
+                          action: 'move',
+                          character: heroId,
+                          x: finalDest.x,
+                          y: finalDest.y,
+                          waypoints,
+                          maxBound: curGrid - 1,
+                          gridSize: curGrid
+                        });
+                      } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                         wsRef.current.send(
                           JSON.stringify({
                             type: 'MOVE_PATH',

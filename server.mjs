@@ -32,6 +32,12 @@ roomEventBus.on('room:mmo-world-village:all', (payload) => {
             payload.actionType === 'attack' ? 'ATTACK_RESULT' : 'SYNC_SNAPSHOT',
       version: payload.version,
       state: payload.state,
+      finalPos: payload.actionType === 'move'
+        ? {
+            x: payload.actionPayload?.x,
+            y: payload.actionPayload?.y
+          }
+        : undefined,
       ...payload.actionPayload // spread characterId, waypoints, etc.
     });
     for (const client of roomClients) {
@@ -52,6 +58,12 @@ roomEventBus.on('newListener', (event) => {
                 payload.actionType === 'attack' ? 'ATTACK_RESULT' : 'SYNC_SNAPSHOT',
           version: payload.version,
           state: payload.state,
+      finalPos: payload.actionType === 'move'
+        ? {
+            x: payload.actionPayload?.x,
+            y: payload.actionPayload?.y
+          }
+        : undefined,
           ...payload.actionPayload
         });
         for (const client of roomClients) {

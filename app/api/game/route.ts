@@ -406,7 +406,17 @@ export async function POST(req: NextRequest) {
           throw Error('Esta ficha pertence a outro jogador.');
         }
         if (old) {
-          s.characters = s.characters.map((x) => (x.id === old.id ? { ...next, id: old.id, owner: old.owner } : x));
+          s.characters = s.characters.map((x) =>
+  x.id === old.id
+    ? {
+        ...next,
+        id: old.id,
+        owner: old.owner,
+        x: old.x,
+        y: old.y,
+      }
+    : x
+);
         } else {
           if (isMmo) {
             const existing = s.characters.find((x) => x.owner === user!.userId);
