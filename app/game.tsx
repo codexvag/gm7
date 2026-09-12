@@ -1635,6 +1635,303 @@ export default function Game() {
     }
   };
 
+
+  // CAMPAIGN GUIDE COMBAT RESUME FIX
+  // The guide must never start a campaign battle on the village map
+  // just because a defeated hero respawned there.
+  const returnToActivePartyBattleFromGuide =
+    async (): Promise<boolean> => {
+      if (
+        !active ||
+        !state ||
+        !active.partyId ||
+        !state.combat
+      ) {
+        return false;
+      }
+
+      const order =
+        state.order || [];
+
+      const allyInBattle =
+        state.characters.find(
+          (hero) =>
+            hero.id !== active.id &&
+            hero.partyId === active.partyId &&
+            hero.hp > 0 &&
+            order.includes(hero.id)
+        );
+
+      const samePartyBattle =
+        state.combatPartyId === active.partyId ||
+        Boolean(allyInBattle);
+
+      if (
+        !samePartyBattle ||
+        order.includes(active.id)
+      ) {
+        return false;
+      }
+
+      const result =
+        await action({
+          action: 'joinCombat',
+          character: active.id
+        });
+
+      if (!result?.room) {
+        return false;
+      }
+
+      const returnedHero =
+        result.room.state.characters.find(
+          (hero) =>
+            hero.id === active.id
+        );
+
+      if (!returnedHero) {
+        return false;
+      }
+
+      const returnedBiome =
+        (
+          returnedHero.biome ||
+          result.room.state.biome ||
+          'village'
+        ) as BiomeType;
+
+      const returnedLocation =
+        returnedHero.location ??
+        result.room.state.location ??
+        0;
+
+      setBattlemapBiome(
+        returnedBiome
+      );
+
+      setBattlemapSeed(
+        Date.now()
+      );
+
+      setCurrentAct(
+        (
+          returnedLocation >= 4
+            ? 3
+            : returnedLocation >= 2
+              ? 2
+              : 1
+        ) as 1 | 2 | 3
+      );
+
+      setView('Aventura');
+
+      return true;
+    };
+
+  const getCurrentCampaignBattleLocation =
+    (): number => {
+      if (!active) {
+        return 0;
+      }
+
+      const qp =
+        active.questProgress ||
+        {};
+
+      const flags =
+        active.worldFlags ||
+        {};
+
+      // Campaign completed: there is no automatic
+      // "next campaign battle".
+      if (
+        qp.campaign_completed ||
+        qp.ignisrax_defeated ||
+        flags.campaign_completed ||
+        flags.ignisrax_defeated
+      ) {
+        return -1;
+      }
+
+      // Current objective priority.
+      if (
+        !qp.forest_cleared &&
+        qp.kaelen_talked
+      ) {
+        return 1;
+      }
+
+      if (
+        !qp.ruins_cleared &&
+        (
+          qp.forest_cleared ||
+          flags.ruins_unlocked
+        )
+      ) {
+        return 2;
+      }
+
+      if (
+        !qp.malakor_defeated &&
+        (
+          qp.ruins_cleared ||
+          qp.dungeon_entered ||
+          flags.catacombs_unsealed ||
+          flags.dungeon_unlocked
+        )
+      ) {
+        return 3;
+      }
+
+      if (
+        !qp.canyon_cleared &&
+        (
+          qp.malakor_defeated ||
+          flags.canyon_unlocked
+        )
+      ) {
+        return 4;
+      }
+
+      if (
+        !qp.ignisrax_defeated &&
+        (
+          qp.canyon_cleared ||
+          flags.dragon_lair_unlocked
+        )
+      ) {
+        return 5;
+      }
+
+      return (
+        active.location ??
+        0
+      );
+    };
+
+  const handleCampaignGuideTravel =
+    async (
+      biome: BiomeType
+    ) => {
+      if (!active) {
+        return;
+      }
+
+      // Existing multiplayer battle has priority over
+      // the generic campaign travel button.
+      if (
+        await returnToActivePartyBattleFromGuide()
+      ) {
+        return;
+      }
+
+      await handleTravel(
+        biome
+      );
+    };
+
+  const handleCampaignGuideCombat =
+    async () => {
+      if (
+        !active ||
+        !state
+      ) {
+        return;
+      }
+
+      // If the hero died while the party is still fighting,
+      // rejoin THAT battle and THAT map.
+      if (
+        await returnToActivePartyBattleFromGuide()
+      ) {
+        return;
+      }
+
+      // Otherwise resolve the map from campaign progression.
+      // Never use the respawn location (village) as the
+      // campaign battle location.
+      const targetLocation =
+        getCurrentCampaignBattleLocation();
+
+      if (
+        targetLocation < 0
+      ) {
+        setShowQuests(true);
+        return;
+      }
+
+      const target =
+        locations[
+          targetLocation
+        ];
+
+      if (!target) {
+        return;
+      }
+
+      const targetBiome =
+        target.biome as BiomeType;
+
+      const currentLocation =
+        active.location ??
+        0;
+
+      const currentBiome =
+        active.biome ||
+        'village';
+
+      if (
+        currentLocation !==
+          targetLocation ||
+        currentBiome !==
+          targetBiome
+      ) {
+        const travelResult =
+          await action({
+            action: 'location',
+            location:
+              targetLocation,
+            biome:
+              targetBiome,
+            character:
+              active.id
+          });
+
+        if (
+          !travelResult?.room
+        ) {
+          return;
+        }
+
+        setBattlemapBiome(
+          targetBiome
+        );
+
+        setBattlemapSeed(
+          Date.now()
+        );
+
+        setCurrentAct(
+          (
+            targetLocation >= 4
+              ? 3
+              : targetLocation >= 2
+                ? 2
+                : 1
+          ) as 1 | 2 | 3
+        );
+
+        setView('Aventura');
+      }
+
+      // Only after the server has persisted the correct
+      // campaign map may initiative begin.
+      await action({
+        action: 'startCombat',
+        character: active.id
+      });
+    };
+
   const handleStartAdventure = async (advId: string) => {
     if (!state) return;
     const adv = MICRO_ADVENTURES[advId];
@@ -2948,9 +3245,13 @@ export default function Game() {
                   state={state || null}
                   activeHero={active}
                   onTalkNpc={(npcId) => handleTalkNpc(npcId)}
-                  onTravel={(b) => handleTravel(b)}
+                  onTravel={(b) => {
+                    void handleCampaignGuideTravel(
+                      b
+                    );
+                  }}
                   onStartCombat={() => {
-                    if (active) void action({ action: 'startCombat', character: active.id });
+                    void handleCampaignGuideCombat();
                   }}
                   onOpenJournal={() => setShowQuests(true)}
                 />
