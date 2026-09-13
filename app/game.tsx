@@ -91,7 +91,7 @@ import { PartySidebar } from '@/components/game/party-sidebar';
 import { InitiativeRibbon } from '@/components/game/initiative-ribbon';
 import { GamemasterSidebar } from '@/components/game/gamemaster-sidebar';
 import { LevelUpModal } from '@/components/game/level-up-modal';
-import { MICRO_ADVENTURES, startMicroAdventure, completeMicroAdventure } from '@/lib/micro-adventures';
+import { MICRO_ADVENTURES } from '@/lib/micro-adventures';
 import { spawnDragonBoss, getDragonCombatPhase, executeDragonBreath } from '@/lib/dragon-encounter';
 import { playSfx } from '@/lib/sound-effects';
 
@@ -1269,6 +1269,204 @@ export default function Game() {
     }
   };
 
+  const handleExecuteSupportSpell = async (
+    targetId: string
+  ) => {
+    if (
+      busy ||
+      !active ||
+      !state ||
+      !targetingAction ||
+      targetingAction.category !==
+        'spell'
+    ) {
+      return;
+    }
+
+    const target =
+      state.characters.find(
+        (character) =>
+          character.id ===
+          targetId
+      );
+
+    if (!target) {
+      return;
+    }
+
+    const selectedSpell =
+      targetingAction;
+
+    const distance =
+      Math.max(
+        Math.abs(
+          active.x -
+          target.x
+        ),
+        Math.abs(
+          active.y -
+          target.y
+        )
+      );
+
+    if (
+      distance >
+      selectedSpell.rangeSquares
+    ) {
+      setError(
+        'Alvo fora do alcance de ' +
+          selectedSpell.name +
+          '.'
+      );
+
+      return;
+    }
+
+    const result =
+      await action({
+        action: 'spell',
+        character: active.id,
+        spellName:
+          selectedSpell.canonicalName ||
+          selectedSpell.name,
+        spellLevel:
+          selectedSpell.spellLevel ||
+          0,
+        targetId:
+          target.id
+      });
+
+    if (
+      result?.healResult
+    ) {
+      const now =
+        Date.now();
+
+      setHealVfx(
+        (previous) => ({
+          ...previous,
+          [target.id]: {
+            timestamp: now
+          }
+        })
+      );
+
+      triggerRecoil(
+        target.id,
+        {
+          x: active.x,
+          y: active.y
+        },
+        {
+          x: target.x,
+          y: target.y
+        },
+        'heal'
+      );
+
+      setTimeout(
+        () => {
+          setHealVfx(
+            (previous) => {
+              const next = {
+                ...previous
+              };
+
+              delete next[
+                target.id
+              ];
+
+              return next;
+            }
+          );
+        },
+        800
+      );
+    }
+
+    setTargetingAction(
+      null
+    );
+
+    setIsBottomHudMinimized(
+      false
+    );
+  };
+
+  const handleExecuteSpellPoint = async (
+    x: number,
+    y: number
+  ) => {
+    if (
+      busy ||
+      !active ||
+      !state ||
+      !targetingAction ||
+      targetingAction.category !==
+        'spell'
+    ) {
+      return;
+    }
+
+    const selectedSpell =
+      targetingAction;
+
+    const distance =
+      Math.max(
+        Math.abs(
+          active.x -
+          x
+        ),
+        Math.abs(
+          active.y -
+          y
+        )
+      );
+
+    if (
+      distance >
+      selectedSpell.rangeSquares
+    ) {
+      setError(
+        'Ponto fora do alcance de ' +
+          selectedSpell.name +
+          '.'
+      );
+
+      return;
+    }
+
+    await action({
+      action:
+        'spell',
+
+      character:
+        active.id,
+
+      spellName:
+        selectedSpell.canonicalName ||
+        selectedSpell.name,
+
+      spellLevel:
+        selectedSpell.spellLevel ||
+        0,
+
+      targetX:
+        x,
+
+      targetY:
+        y
+    });
+
+    setTargetingAction(
+      null
+    );
+
+    setIsBottomHudMinimized(
+      false
+    );
+  };
+
   // EXECUTE COMBAT ATTACK FLOW - SERVER AUTHORITATIVE RESOLUTION
   // Sequence: Action Choice → Server Roll → Dice 3D → (dice dismiss) → Projectile VFX → Floating Text
   const handleExecuteAttack = async (targetId?: string) => {
@@ -1315,13 +1513,30 @@ export default function Game() {
     }
 
     // Call server action FIRST (authoritative SRD roll + enemy AI counter-attack)
-    const res = await action({
-      action: 'attack',
-      character: active.id,
-      target: target.id,
-      damageFormula: dmgFormula,
-      mode
-    });
+    const res =
+      curTargeting?.category === 'spell'
+        ? await action({
+            action: 'spell',
+            character: active.id,
+            spellName:
+              curTargeting.canonicalName ||
+              curTargeting.name,
+            spellLevel: curTargeting.spellLevel || 0,
+            targetId: target.id
+          })
+        : curTargeting?.id === 'attack-offhand'
+        ? await action({
+            action: 'tacticalAction',
+            character: active.id,
+            actionId: 'attack-offhand',
+            targetId: target.id
+          })
+        : await action({
+            action: 'attack',
+            character: active.id,
+            target: target.id,
+            mode
+          });
 
     if (res && res.attackResult) {
       const r = res.attackResult;
@@ -1395,24 +1610,77 @@ export default function Game() {
     }
   };
 
-  // HANDLE ADVANCE ACT
+  // CAMPAIGN CONTINUE
+  // The old 1 -> 2 -> 3 -> 1 act loop no longer exists.
+  // The server decides the correct unfinished story objective.
   const handleAdvanceAct = async () => {
-    const next = (currentAct === 1 ? 2 : currentAct === 2 ? 3 : 1) as 1 | 2 | 3;
-    const newSeed = Date.now();
-    const ok = await action({ action: 'advanceAct', act: next });
-    if (ok) {
-      // Only update client state AFTER server confirms the act change
-      setCurrentAct(next);
-      setDungeonSeed(newSeed);
-      setProceduralDungeon(generateProceduralDungeon(next, dungeonSize, newSeed));
-      const biomeForAct = next === 1 ? 'village' : next === 2 ? 'dungeon' : 'dungeon';
-      setBattlemapBiome(biomeForAct as any);
-      setBattlemapSeed(newSeed);
-      void narrate(
-        '',
-        `O grupo desce às profundezas e alcança o ${CAMPAIGN_ACTS[next].title}: ${CAMPAIGN_ACTS[next].subtitle}. ${CAMPAIGN_ACTS[next].dialogueIntro}`
-      );
+    if (!active) {
+      return;
     }
+
+    const result =
+      await action({
+        action:
+          'advanceAct',
+
+        character:
+          active.id
+      });
+
+    if (
+      !result?.room
+    ) {
+      return;
+    }
+
+    const updated =
+      result.room.state
+        .characters
+        .find(
+          (hero) =>
+            hero.id ===
+            active.id
+        );
+
+    if (!updated) {
+      return;
+    }
+
+    const location =
+      updated.location ??
+      result.room.state
+        .location ??
+      0;
+
+    const biome =
+      (
+        updated.biome ||
+        result.room.state
+          .biome ||
+        'village'
+      ) as BiomeType;
+
+    setBattlemapBiome(
+      biome
+    );
+
+    setBattlemapSeed(
+      Date.now()
+    );
+
+    setCurrentAct(
+      (
+        location >= 4
+          ? 3
+          : location >= 2
+            ? 2
+            : 1
+      ) as 1 | 2 | 3
+    );
+
+    setView(
+      'Aventura'
+    );
   };
 
   // HANDLE DRINK / USE CONSUMABLE (Healing Potions, etc.)
@@ -1932,44 +2200,72 @@ export default function Game() {
       });
     };
 
-  const handleStartAdventure = async (advId: string) => {
-    if (!state) return;
-    const adv = MICRO_ADVENTURES[advId];
-    if (!adv) return;
-
-    const res = startMicroAdventure(state, advId);
-    if (res.success) {
-      const targetBiome: BiomeType =
-        adv.locationIndex === 0 ? 'village'
-        : adv.locationIndex === 1 ? 'forest'
-        : adv.locationIndex === 2 ? 'ruins'
-        : adv.locationIndex === 3 ? 'dungeon'
-        : adv.locationIndex === 4 ? 'canyon'
-        : 'lair';
-
-      await handleTravel(targetBiome);
-
-      // Spawn adventure stage enemies if present
-      const stage1 = adv.stages[1];
-      if (stage1?.spawnEnemies && stage1.spawnEnemies.length > 0) {
-        state.enemies = stage1.spawnEnemies.map((enemy) => ({
-          id: crypto.randomUUID(),
-          name: enemy.name,
-          hp: enemy.hp,
-          maxHp: enemy.maxHp,
-          ac: enemy.ac,
-          attack: enemy.attack,
-          damage: enemy.damage,
-          weapon: enemy.weapon,
-          initiative: 10,
-          x: enemy.x,
-          y: enemy.y
-        }));
-        state.combat = true;
-      }
-      await action({ action: 'notes', notes: state.notes });
-      void narrate('', res.log);
+  const handleStartAdventure = async (
+    advId: string
+  ) => {
+    if (!active) {
+      return;
     }
+
+    const result =
+      await action({
+        action:
+          'startAdventure',
+
+        adventureId:
+          advId,
+
+        character:
+          active.id
+      });
+
+    if (
+      !result?.room
+    ) {
+      return;
+    }
+
+    const updatedHero =
+      result.room.state
+        .characters
+        .find(
+          (hero) =>
+            hero.id ===
+            active.id
+        );
+
+    if (!updatedHero) {
+      return;
+    }
+
+    const targetBiome =
+      (
+        updatedHero.biome ||
+        result.room.state
+          .biome ||
+        'village'
+      ) as BiomeType;
+
+    setBattlemapBiome(
+      targetBiome
+    );
+
+    setBattlemapSeed(
+      Date.now()
+    );
+
+    setCurrentAct(
+      (
+        (updatedHero.location || 0) >= 4
+          ? 3
+          : (updatedHero.location || 0) >= 2
+            ? 2
+            : 1
+      ) as 1 | 2 | 3
+    );
+
+    setView('Aventura');
+    setShowQuests(false);
   };
 
   const handleChallengeDragon = async () => {
@@ -2212,7 +2508,8 @@ export default function Game() {
               onSaveNotes={(n) => void action({ action: 'notes', notes: n })}
               isOwner={owner}
               questProgress={active?.questProgress || state?.questProgress}
-              worldFlags={active?.worldFlags || state?.worldFlags}
+                                  campaignProof={active?.campaignProof}
+worldFlags={active?.worldFlags || state?.worldFlags}
               activeAdventureId={active?.activeMicroAdventureId || state?.activeMicroAdventureId}
               onStartAdventure={handleStartAdventure}
               onChallengeDragon={handleChallengeDragon}
@@ -2645,8 +2942,24 @@ export default function Game() {
                       setIsBottomHudMinimized(false);
                     }}
                     onSelectToken={(type, id) => {
-                      if (type === 'hero') setSelected(id);
-                      else setSelectedEnemyId(id);
+                      if (
+                        type === 'hero' &&
+                        targetingAction?.category === 'spell' &&
+                        Boolean(
+                          targetingAction.healFormula
+                        )
+                      ) {
+                        void handleExecuteSupportSpell(
+                          id
+                        );
+                        return;
+                      }
+
+                      if (type === 'hero') {
+                        setSelected(id);
+                      } else {
+                        setSelectedEnemyId(id);
+                      }
                     }}
                     onMoveHero={(heroId, x, y) => {
                       const curGrid = battlemapBiome === 'village' ? 8 : dungeonSize;
@@ -2778,6 +3091,27 @@ export default function Game() {
                     onTargetEnemy={(enemyId) => {
                       handleExecuteAttack(enemyId);
                     }}
+                    onTargetHero={(heroId) => {
+                      if (
+                        targetingAction?.category ===
+                          'spell'
+                      ) {
+                        void handleExecuteSupportSpell(
+                          heroId
+                        );
+                      }
+                    }}
+                    onTargetSquare={(x, y) => {
+                      if (
+                        targetingAction?.category ===
+                          'spell'
+                      ) {
+                        void handleExecuteSpellPoint(
+                          x,
+                          y
+                        );
+                      }
+                    }}
                     locationName={location.name}
                     locationLabel={location.label}
                     isCombat={Boolean(state?.combat)}
@@ -2826,6 +3160,7 @@ export default function Game() {
                     projectiles={activeProjectiles}
                     biome={battlemapBiome}
                     movementUsed={state?.movementUsed || 0}
+                    movementBonusSquares={state?.movementBonusSquares || 0}
                     onInteractPlayer={(hero) => setInteractingPlayer(hero)}
                     screenShake={hitStopType === 'crit'}
                     tokenRecoils={tokenRecoils}
@@ -2844,7 +3179,13 @@ export default function Game() {
                         ALVO: {targetingAction.name}
                       </span>
                       <span className="text-[10px] text-zinc-300 font-mono">
-                        ({targetingAction.rangeSquares * 1.5}m) • Selecione um inimigo no tabuleiro
+                        ({targetingAction.rangeSquares * 1.5}m) • {targetingAction.targetMode === 'area'
+                          ? 'Selecione o centro da area'
+                          : targetingAction.targetMode === 'point'
+                            ? 'Selecione o destino'
+                            : targetingAction.targetMode === 'ally'
+                              ? 'Selecione um aliado'
+                              : 'Selecione um inimigo'}
                       </span>
                     </div>
                     <button
@@ -3154,34 +3495,168 @@ export default function Game() {
                     <BottomPlayerHud
                       activeHero={active}
                       party={state?.characters || []}
+                      spellEffects={state?.spellEffects || []}
                       onSelectHero={(id) => setSelected(id)}
                       isMinimized={isBottomHudMinimized}
                       onToggleMinimized={(v) => setIsBottomHudMinimized(v)}
                       onActionSelect={(act) => {
-                        if (act.category === 'attack' || (act.category === 'spell' && !act.healFormula)) {
-                          // Minimize bottom console and enter explicit Target Selection Mode on the board
-                          setTargetingAction(act);
-                          setIsBottomHudMinimized(true);
-                        } else if (act.category === 'spell' && act.healFormula) {
-                          void action({
-                            action: 'spell',
-                            character: active.id,
-                            spellName: act.name,
-                            spellLevel: act.spellLevel || 0,
-                            healFormula: act.healFormula,
-                            targetId: active.id
-                          });
-                        } else if (act.category === 'item') {
-                          void handleUseItem(act.id, active.id);
-                        } else if (act.category === 'skill') {
+                        if (!active) {
+                          return;
+                        }
+
+                        if (
+                          act.category === 'skill'
+                        ) {
+                          const skillName =
+                            act.name.replace(
+                              /^Teste de\s+/,
+                              ''
+                            );
+
+                          const skill =
+                            skills.find(
+                              ([name]) =>
+                                name ===
+                                skillName
+                            );
+
                           void action({
                             action: 'check',
-                            character: active.id,
-                            skill: act.name.replace('Teste de ', ''),
-                            mode: 'normal'
+                            character:
+                              active.id,
+                            ability:
+                              skill?.[1] ??
+                              0,
+                            skill:
+                              skillName,
+                            label:
+                              'Teste de ' +
+                              skillName
                           });
-                        } else if (act.category === 'action') {
-                          void action({ action: 'tactic', character: active.id, tactic: act.id });
+
+                          return;
+                        }
+
+                        if (
+                          act.category ===
+                            'spell'
+                        ) {
+                          const spellName =
+                            act.canonicalName ||
+                            act.name;
+
+                          /*
+                           * Shield keeps the existing automatic
+                           * reaction policy used by enemy AI.
+                           */
+                          /* SRD_3B_C1_COUNTERSPELL_UI */
+                          if (
+                            spellName === 'Shield' ||
+                            spellName === 'Counterspell'
+                          ) {
+                            void action({
+                              action:
+                                'tacticalAction',
+
+                              character:
+                                active.id,
+
+                              actionId:
+                                spellName === 'Shield'
+                                  ? 'escudo-arcano'
+                                  : 'counterspell'
+                            });
+
+                            return;
+                          }
+
+                          /*
+                           * Personal spells need no map target.
+                           */
+                          if (
+                            act.targetMode ===
+                              'self'
+                          ) {
+                            void action({
+                              action:
+                                'spell',
+
+                              character:
+                                active.id,
+
+                              spellName,
+
+                              spellLevel:
+                                act.spellLevel ||
+                                0,
+
+                              targetId:
+                                active.id
+                            });
+
+                            return;
+                          }
+
+                          /*
+                           * Enemy / ally / point / area spells
+                           * enter targeting mode.
+                           */
+                          setTargetingAction(
+                            act
+                          );
+
+                          setIsBottomHudMinimized(
+                            true
+                          );
+
+                          return;
+                        }
+
+                        if (
+                          act.category !==
+                            'spell' &&
+                          (
+                            act.economyType ===
+                              'reaction' ||
+                            act.category ===
+                              'action'
+                          )
+                        ) {
+                          void action({
+                            action:
+                              'tacticalAction',
+                            character:
+                              active.id,
+                            actionId:
+                              act.id
+                          });
+
+                          return;
+                        }
+
+                        if (
+                          act.category ===
+                            'item'
+                        ) {
+                          void handleUseItem(
+                            act.id,
+                            active.id
+                          );
+
+                          return;
+                        }
+
+                        if (
+                          act.category ===
+                            'attack'
+                        ) {
+                          setTargetingAction(
+                            act
+                          );
+
+                          setIsBottomHudMinimized(
+                            true
+                          );
                         }
                       }}
                       onOpenInventory={() => setShowInventory(true)}
@@ -3212,6 +3687,13 @@ export default function Game() {
                       isCombat={Boolean(state?.combat)}
                       isHeroTurn={Boolean(isHeroTurn)}
                       actionUsed={Boolean(state?.actionUsed)}
+                      bonusActionUsed={Boolean(state?.bonusActionUsed)}
+                      reactionUsed={Boolean(
+                        active &&
+                        state?.reactionUsedBy?.[active.id]
+                      )}
+                      movementUsed={state?.movementUsed || 0}
+                      movementBonusSquares={state?.movementBonusSquares || 0}
                       busy={busy}
                     />
                   </div>
@@ -3265,7 +3747,9 @@ export default function Game() {
                     isOwner={Boolean(owner)}
                     questProgress={active?.questProgress || state?.questProgress}
                     worldFlags={active?.worldFlags || state?.worldFlags}
-                    activeAdventureId={active?.activeMicroAdventureId || state?.activeMicroAdventureId}
+                    activeAdventureId={active?.activeMicroAdventureId}
+                    adventureCompletions={active?.adventureCompletions}
+                    adventureCooldowns={active?.adventureCooldowns}
                     onStartAdventure={handleStartAdventure}
                     onChallengeDragon={handleChallengeDragon}
                   />
@@ -3290,13 +3774,14 @@ export default function Game() {
                       setShowLevelUp(false);
                       setLevelUpHero(null);
                     }}
-                    onConfirmLevelUp={(statIncreases: number[]) => {
+                    onConfirmLevelUp={(statIncreases: number[], spellChoices) => {
                       const target = levelUpHero || active;
                       if (!target) return;
                       void action({
                         action: 'levelup',
                         character: target.id,
-                        statIncreases
+                        statIncreases,
+                        spellChoices
                       });
                       setShowLevelUp(false);
                       setLevelUpHero(null);

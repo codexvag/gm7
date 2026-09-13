@@ -12,7 +12,13 @@
     "start": "node ./scripts/start-server.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "test:srd:b1": "node scripts/test-srd-b1.mjs",
+    "test:srd:b2": "node scripts/test-srd-b2.mjs",
+    "test:srd:b3": "node scripts/test-srd-b3.mjs",
+    "test:srd:c1": "node scripts/test-srd-c1.mjs",
+    "test:srd:c2": "node scripts/test-srd-c2.mjs",
+    "test:all": "node scripts/test-srd-b1.mjs && node scripts/test-srd-b2.mjs && node scripts/test-srd-b3.mjs && node scripts/test-srd-c1.mjs && node scripts/test-srd-c2.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

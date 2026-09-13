@@ -285,7 +285,7 @@ export const SPELLS_CATALOG: SpellDefinition[] = [
     level: 0,
     school: 'Evocação',
     castTime: '1 Ação',
-    rangeSquares: 12,
+    rangeSquares: 24,
     damageFormula: '1d10',
     description: 'Dispara um feixe incandescente. Ataque mágico à distância.',
     icon: 'Flame',
@@ -297,7 +297,7 @@ export const SPELLS_CATALOG: SpellDefinition[] = [
     level: 0,
     school: 'Evocação',
     castTime: '1 Ação',
-    rangeSquares: 12,
+    rangeSquares: 24,
     damageFormula: '1d10',
     description: 'Um raio de energia crepitante atinge o inimigo.',
     icon: 'Zap',
@@ -313,7 +313,7 @@ export const SPELLS_CATALOG: SpellDefinition[] = [
     damageFormula: '1d8',
     description: 'Eletricidade estala nas pontas dos seus dedos no combate corpo a corpo.',
     icon: 'Zap',
-    classes: ['Mago', 'Feiticeiro', 'Bruxo']
+    classes: ['Mago', 'Feiticeiro']
   },
   {
     id: 'chama-sagrada',
@@ -332,13 +332,13 @@ export const SPELLS_CATALOG: SpellDefinition[] = [
     id: 'curar-ferimentos',
     name: 'Curar Ferimentos',
     level: 1,
-    school: 'Evocação',
+    school: 'Abjura??o',
     castTime: '1 Ação',
     rangeSquares: 1,
-    healFormula: '1d8+3',
+    healFormula: '2d8',
     description: 'Uma criatura tocada recupera pontos de vida.',
     icon: 'Heart',
-    classes: ['Clérigo', 'Bardo', 'Druida', 'Paladino']
+    classes: ['Cl?rigo', 'Bardo', 'Druida', 'Paladino', 'Patrulheiro']
   },
   {
     id: 'missoes-magicos',
@@ -346,7 +346,7 @@ export const SPELLS_CATALOG: SpellDefinition[] = [
     level: 1,
     school: 'Evocação',
     castTime: '1 Ação',
-    rangeSquares: 12,
+    rangeSquares: 24,
     damageFormula: '3d4+3',
     description: 'Três dardos luminosos acertam infalivelmente seus alvos.',
     icon: 'Sparkles',
@@ -386,8 +386,8 @@ export const SPELLS_CATALOG: SpellDefinition[] = [
     level: 2,
     school: 'Evocação',
     castTime: '1 Ação',
-    rangeSquares: 12,
-    damageFormula: '4d6',
+    rangeSquares: 24,
+    damageFormula: '2d6',
     description: 'Três raios de fogo atingem alvos com força tremenda.',
     icon: 'Flame',
     classes: ['Mago', 'Feiticeiro']
@@ -434,6 +434,10 @@ export type Character = {
   usedSlots: number[];
   features: string;
   spells: string;
+  knownCantrips?: string[];
+  preparedSpells?: string[];
+  spellbook?: string[];
+  spellSelectionVersion?: number;
   inventory: string;
   notes: string;
   conditions: string[];
@@ -444,6 +448,10 @@ export type Character = {
   deathSuccess: number;
   deathFail: number;
   exhaustion: number;
+  secondWindSpent?: number;
+  rageSpent?: number;
+  raging?: boolean;
+  rageEndsAtRound?: number;
   equipment?: EquipmentSlots;
   gold?: number;
   partyId?: string;
@@ -461,6 +469,18 @@ export type Character = {
   activeMicroAdventureStage?: number;
   adventureCompletions?: Record<string, number>;
   adventureCooldowns?: Record<string, number>;
+  campaignProof?: Record<string, boolean>;
+  campaignProofVersion?: number;
+  concentrationEffectId?: string;
+  temporaryHp?: number;
+  damageResistances?: string[];
+  damageVulnerabilities?: string[];
+  damageImmunities?: string[];
+  conditionImmunities?: string[];
+  mysticArcanumSpells?: string[];
+  mysticArcanumSpent?: number[];
+  freeHuntersMarkSpent?: number;
+  arcaneRecoverySpent?: boolean;
 };
 
 export type PartyInvite = {
@@ -487,6 +507,11 @@ export type Enemy = {
   x: number;
   y: number;
   conditions?: string[];
+  temporaryHp?: number;
+  damageResistances?: string[];
+  damageVulnerabilities?: string[];
+  damageImmunities?: string[];
+  conditionImmunities?: string[];
   biome?: BiomeType;
   partyId?: string;
   ownerCharId?: string;
@@ -539,6 +564,27 @@ export interface EconomyContext {
   updatedAt: number;
 }
 
+export type ActiveSpellAppliedCondition = {
+  targetType: 'character' | 'enemy';
+  targetId: string;
+  condition: string;
+};
+
+export type ActiveSpellEffect = {
+  id: string;
+  spellName: string;
+  casterId: string;
+  spellLevel: number;
+  concentration: boolean;
+  createdRound: number;
+  expiresAtRound?: number;
+  characterTargetIds: string[];
+  enemyTargetIds: string[];
+  appliedConditions: ActiveSpellAppliedCondition[];
+  description: string;
+  requiresAdjudication?: boolean;
+};
+
 export type State = {
   characters: Character[];
   enemies: Enemy[];
@@ -557,6 +603,12 @@ export type State = {
   activeMicroAdventureId?: string;
   actionUsed?: boolean;
   bonusActionUsed?: boolean;
+  reactionUsedBy?: Record<string, boolean>;
+  reactionPolicyBy?: Record<string, 'opportunity' | 'shield' | 'ready-melee' | 'counterspell'>;
+  movementBonusSquares?: number;
+  disengagedActorId?: string;
+  spellSlotUsedThisTurn?: boolean;
+  spellEffects?: ActiveSpellEffect[];
   movementUsed?: number;
   biome?: BiomeType;
   combatMode?: 'tactical' | 'free';
@@ -618,6 +670,11 @@ export function initialState(): State {
     notes: '',
     actionUsed: false,
     bonusActionUsed: false,
+    reactionUsedBy: {},
+    reactionPolicyBy: {},
+    movementBonusSquares: 0,
+    spellSlotUsedThisTurn: false,
+    spellEffects: [],
     movementUsed: 0,
     biome: 'village',
     questProgress: {},
@@ -756,6 +813,11 @@ export function starterState(ownerId = 'local-hero'): State {
     notes: 'Prólogo em Vila do Rio Verde: conversar com o Ancião Doran, estocar poções com Elenor e receber instruções táticas de Kaelen.',
     actionUsed: false,
     bonusActionUsed: false,
+    reactionUsedBy: {},
+    reactionPolicyBy: {},
+    movementBonusSquares: 0,
+    spellSlotUsedThisTurn: false,
+    spellEffects: [],
     movementUsed: 0,
     biome: 'village',
     questProgress: {},
@@ -1002,29 +1064,173 @@ export function isAsiLevel(className: string, level: number): boolean {
   return false;
 }
 
-export function getSpellSlotsForClass(className: string, level: number): number[] {
-  const slots = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-  const fullCasters = ['Mago', 'Clérigo', 'Druida', 'Feiticeiro', 'Bardo'];
-  const halfCasters = ['Paladino', 'Patrulheiro'];
+export function getSpellSlotsForClass(
+  className: string,
+  level: number
+): number[] {
+  const normalizedLevel =
+    Math.max(
+      1,
+      Math.min(
+        20,
+        Math.floor(level)
+      )
+    );
 
-  if (fullCasters.includes(className)) {
-    if (level === 1) slots[0] = 2;
-    else if (level === 2) slots[0] = 3;
-    else if (level === 3) { slots[0] = 4; slots[1] = 2; }
-    else if (level === 4) { slots[0] = 4; slots[1] = 3; }
-    else if (level >= 5) { slots[0] = 4; slots[1] = 3; slots[2] = 2; }
-  } else if (halfCasters.includes(className)) {
-    if (level === 2) slots[0] = 2;
-    else if (level === 3) slots[0] = 3;
-    else if (level === 4) slots[0] = 3;
-    else if (level >= 5) { slots[0] = 4; slots[1] = 2; }
-  } else if (className === 'Bruxo') {
-    if (level === 1) slots[0] = 1;
-    else if (level === 2) slots[0] = 2;
-    else if (level >= 3 && level < 5) slots[1] = 2;
-    else if (level >= 5) slots[2] = 2;
+  const ZERO = () =>
+    [
+      0, 0, 0,
+      0, 0, 0,
+      0, 0, 0
+    ];
+
+  const FULL:
+    number[][] = [
+      [2,0,0,0,0,0,0,0,0],
+      [3,0,0,0,0,0,0,0,0],
+      [4,2,0,0,0,0,0,0,0],
+      [4,3,0,0,0,0,0,0,0],
+      [4,3,2,0,0,0,0,0,0],
+      [4,3,3,0,0,0,0,0,0],
+      [4,3,3,1,0,0,0,0,0],
+      [4,3,3,2,0,0,0,0,0],
+      [4,3,3,3,1,0,0,0,0],
+      [4,3,3,3,2,0,0,0,0],
+      [4,3,3,3,2,1,0,0,0],
+      [4,3,3,3,2,1,0,0,0],
+      [4,3,3,3,2,1,1,0,0],
+      [4,3,3,3,2,1,1,0,0],
+      [4,3,3,3,2,1,1,1,0],
+      [4,3,3,3,2,1,1,1,0],
+      [4,3,3,3,2,1,1,1,1],
+      [4,3,3,3,3,1,1,1,1],
+      [4,3,3,3,3,2,1,1,1],
+      [4,3,3,3,3,2,2,1,1]
+    ];
+
+  const HALF:
+    number[][] = [
+      [2,0,0,0,0,0,0,0,0],
+      [2,0,0,0,0,0,0,0,0],
+      [3,0,0,0,0,0,0,0,0],
+      [3,0,0,0,0,0,0,0,0],
+      [4,2,0,0,0,0,0,0,0],
+      [4,2,0,0,0,0,0,0,0],
+      [4,3,0,0,0,0,0,0,0],
+      [4,3,0,0,0,0,0,0,0],
+      [4,3,2,0,0,0,0,0,0],
+      [4,3,2,0,0,0,0,0,0],
+      [4,3,3,0,0,0,0,0,0],
+      [4,3,3,0,0,0,0,0,0],
+      [4,3,3,1,0,0,0,0,0],
+      [4,3,3,1,0,0,0,0,0],
+      [4,3,3,2,0,0,0,0,0],
+      [4,3,3,2,0,0,0,0,0],
+      [4,3,3,3,1,0,0,0,0],
+      [4,3,3,3,1,0,0,0,0],
+      [4,3,3,3,2,0,0,0,0],
+      [4,3,3,3,2,0,0,0,0]
+    ];
+
+  if (
+    [
+      'Mago',
+      'Cl?rigo',
+      'Druida',
+      'Feiticeiro',
+      'Bardo'
+    ].includes(
+      className
+    )
+  ) {
+    return [
+      ...FULL[
+        normalizedLevel -
+        1
+      ]
+    ];
   }
-  return slots;
+
+  if (
+    [
+      'Paladino',
+      'Patrulheiro'
+    ].includes(
+      className
+    )
+  ) {
+    return [
+      ...HALF[
+        normalizedLevel -
+        1
+      ]
+    ];
+  }
+
+  if (
+    className ===
+      'Bruxo'
+  ) {
+    const result =
+      ZERO();
+
+    let slotCount =
+      1;
+
+    let slotLevel =
+      1;
+
+    if (
+      normalizedLevel >= 2
+    ) {
+      slotCount = 2;
+    }
+
+    if (
+      normalizedLevel >= 3
+    ) {
+      slotLevel = 2;
+    }
+
+    if (
+      normalizedLevel >= 5
+    ) {
+      slotLevel = 3;
+    }
+
+    if (
+      normalizedLevel >= 7
+    ) {
+      slotLevel = 4;
+    }
+
+    if (
+      normalizedLevel >= 9
+    ) {
+      slotLevel = 5;
+    }
+
+    if (
+      normalizedLevel >= 11
+    ) {
+      slotCount = 3;
+    }
+
+    if (
+      normalizedLevel >= 17
+    ) {
+      slotCount = 4;
+    }
+
+    result[
+      slotLevel - 1
+    ] =
+      slotCount;
+
+    return result;
+  }
+
+  return ZERO();
 }
 
 /**
@@ -1166,12 +1372,93 @@ export function determineAttackMode(
   return 'normal';
 }
 
+function isClearlyNonPhysicalDamageSource(
+  weapon?: string
+): boolean {
+  const value = String(weapon || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  return [
+    'fogo',
+    'fire',
+    'igne',
+    'arcano',
+    'arcana',
+    'runic',
+    'vazio',
+    'void',
+    'sopro',
+    'breath',
+    'magia',
+    'magic',
+    'mistica',
+    'eldritch',
+    'sagrada',
+    'radiant',
+    'raio',
+    'lightning',
+    'chocante',
+    'trovao',
+    'thunder',
+    'necrot'
+  ].some((marker) =>
+    value.includes(marker)
+  );
+}
+
 export function resolveAttack(
   attacker: { name: string; attack: number; damage: string; conditions?: string[]; weapon?: string },
   target: { id?: string; name: string; ac: number; hp: number; conditions?: string[] },
   mode = 'normal',
   isRangedOverride?: boolean
 ): AttackResult {
+  /* SRD_3B_C1_EFFECTIVE_AC */
+  const c1TargetConditions =
+    (target.conditions || [])
+      .map((condition) =>
+        condition
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+      )
+      .join(' | ');
+
+  let c1AcAdjustment = 0;
+
+  if (c1TargetConditions.includes('escudo arcano')) {
+    c1AcAdjustment += 5;
+  }
+
+  if (
+    c1TargetConditions.includes('shield of faith') ||
+    c1TargetConditions.includes('escudo da fe')
+  ) {
+    c1AcAdjustment += 2;
+  }
+
+  if (
+    c1TargetConditions.includes('haste') ||
+    c1TargetConditions.includes('acelerado')
+  ) {
+    c1AcAdjustment += 2;
+  }
+
+  if (
+    c1TargetConditions.includes('slow') ||
+    c1TargetConditions.includes('lentidao')
+  ) {
+    c1AcAdjustment -= 2;
+  }
+
+  if (c1AcAdjustment !== 0) {
+    target = {
+      ...target,
+      ac: Math.max(0, target.ac + c1AcAdjustment)
+    };
+  }
+
   const isRanged = isRangedOverride !== undefined ? isRangedOverride : getWeaponMaxRange(attacker.weapon).isRanged;
   const finalMode = determineAttackMode(attacker.conditions, target.conditions, mode as any, isRanged);
   const r = d20(finalMode);
@@ -1188,16 +1475,113 @@ export function resolveAttack(
     blessBonus = die(4);
   }
 
-  const totalAttack = r.raw + attacker.attack + blessBonus;
-  const hit = isCrit || (!isFumble && totalAttack >= target.ac);
-  const damage = hit ? Math.max(0, roll(attacker.damage, isCrit).total) : 0;
-  const hpBefore = target.hp;
-  const hpAfter = Math.max(0, target.hp - damage);
-  target.hp = hpAfter;
+  /* SRD_3B_B3_BANE_ATTACK */
+  let banePenalty = 0;
+
+  if (
+    (attacker.conditions || [])
+      .some(
+        (condition) => {
+          const normalized =
+            condition
+              .normalize('NFD')
+              .replace(
+                /[\u0300-\u036f]/g,
+                ''
+              )
+              .toLowerCase();
+
+          return (
+            normalized.includes(
+              'bane'
+            ) ||
+            normalized.includes(
+              'amaldicoado'
+            )
+          );
+        }
+      )
+  ) {
+    banePenalty =
+      die(4);
+  }
+
+  const totalAttack =
+    r.raw +
+    attacker.attack +
+    blessBonus -
+    banePenalty;
+
+  const shieldBonus =
+    (target.conditions || []).some(
+      (condition) =>
+        condition
+          .toLowerCase()
+          .includes('escudo arcano')
+    )
+      ? 5
+      : 0;
+
+  const effectiveTargetAc =
+    target.ac +
+    shieldBonus;
+
+  const hit =
+    isCrit ||
+    (
+      !isFumble &&
+      totalAttack >=
+        effectiveTargetAc
+    );
+
+  let damage =
+    hit
+      ? Math.max(
+          0,
+          roll(
+            attacker.damage,
+            isCrit
+          ).total
+        )
+      : 0;
+
+  const ragingResistance =
+    hit &&
+    (target.conditions || []).some(
+      (condition) =>
+        condition
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .includes('em furia')
+    ) &&
+    !isClearlyNonPhysicalDamageSource(
+      attacker.weapon
+    );
+
+  if (ragingResistance) {
+    damage =
+      Math.floor(
+        damage / 2
+      );
+  }
+
+  const hpBefore =
+    target.hp;
+
+  const hpAfter =
+    Math.max(
+      0,
+      target.hp -
+        damage
+    );
+
+  target.hp =
+    hpAfter;
 
   const modeTag = finalMode === 'advantage' ? ' (Vantagem)' : finalMode === 'disadvantage' ? ' (Desvantagem)' : '';
   const blessTag = blessBonus > 0 ? ` +1d4(${blessBonus})[Bênção]` : '';
-  const text = `${attacker.name} → ${target.name}: d20 [${r.dice.join(', ')}]${modeTag}${blessTag} ${signed(attacker.attack)} = ${totalAttack} vs CA ${target.ac}. ${
+  const text = `${attacker.name} → ${target.name}: d20 [${r.dice.join(', ')}]${modeTag}${blessTag} ${signed(attacker.attack)} = ${totalAttack} vs CA ${effectiveTargetAc}. ${
     hit ? (isCrit ? 'CRÍTICO! ' : '') + damage + ' de dano.' : 'Errou.'
   }`;
 
@@ -1208,7 +1592,7 @@ export function resolveAttack(
     isFumble,
     d20Roll: r.raw,
     totalAttack,
-    targetAc: target.ac,
+    targetAc: effectiveTargetAc,
     damage,
     attackerName: attacker.name,
     targetName: target.name,
@@ -1410,7 +1794,45 @@ export function validateMovement(
       return { valid: false, reason: 'Aguarde o seu turno para se mover no combate.', distance };
     }
 
-    const maxBudgetSquares = Math.floor(character.speed / 1.5);
+    /* SRD_3B_C1_EFFECTIVE_MOVEMENT */
+    const c1Conditions =
+      (character.conditions || [])
+        .map((condition) =>
+          condition
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+        )
+        .join(' | ');
+
+    let c1EffectiveSpeed =
+      Math.max(0, character.speed || 0);
+
+    if (
+      c1Conditions.includes('fly') ||
+      c1Conditions.includes('voando')
+    ) {
+      c1EffectiveSpeed =
+        Math.max(c1EffectiveSpeed, 18);
+    }
+
+    if (
+      c1Conditions.includes('haste') ||
+      c1Conditions.includes('acelerado')
+    ) {
+      c1EffectiveSpeed *= 2;
+    }
+
+    if (
+      c1Conditions.includes('slow') ||
+      c1Conditions.includes('lentidao')
+    ) {
+      c1EffectiveSpeed /= 2;
+    }
+
+    const maxBudgetSquares =
+      Math.floor(c1EffectiveSpeed / 1.5) +
+      Math.max(0, state.movementBonusSquares || 0);
     const movementUsed = state.movementUsed || 0;
     if (movementUsed + distance > maxBudgetSquares) {
       const remaining = Math.max(0, maxBudgetSquares - movementUsed);
@@ -1641,7 +2063,9 @@ export function validateWaypointPath(
       };
     }
 
-    const maxBudgetSquares = Math.floor(character.speed / 1.5);
+    const maxBudgetSquares =
+      Math.floor(character.speed / 1.5) +
+      Math.max(0, state.movementBonusSquares || 0);
     const movementUsed = state.movementUsed || 0;
     if (movementUsed + totalDistance > maxBudgetSquares) {
       const remaining = Math.max(0, maxBudgetSquares - movementUsed);

@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import {
   Character,
-  SPELLS_CATALOG,
+  type ActiveSpellEffect,
   TACTICAL_ACTIONS,
   ITEMS_CATALOG,
   mod,
@@ -38,6 +38,10 @@ import {
   canLevelUp,
   getXpForNextLevel
 } from '@/lib/game-engine';
+
+import {
+  getCharacterSpellActions
+} from '@/lib/srd-spellbook';
 
 export type ActionSelection = {
   id: string;
@@ -50,6 +54,9 @@ export type ActionSelection = {
   spellLevel?: number;
   description: string;
   economyType?: 'action' | 'bonus' | 'movement' | 'reaction';
+  targetMode?: 'enemy' | 'ally' | 'self' | 'point' | 'area';
+  canonicalName?: string;
+  concentration?: boolean;
 };
 
 // All 18 official D&D 5e skills with their key attribute index (0:FOR, 1:DES, 2:CON, 3:INT, 4:SAB, 5:CAR)
@@ -77,6 +84,7 @@ const ALL_5E_SKILLS: { name: string; attrIdx: number; attrName: string }[] = [
 interface BottomPlayerHudProps {
   activeHero: Character;
   party: Character[];
+  spellEffects?: ActiveSpellEffect[];
   onSelectHero: (id: string) => void;
   onActionSelect: (action: ActionSelection) => void;
   onOpenInventory: () => void;
@@ -88,6 +96,10 @@ interface BottomPlayerHudProps {
   isCombat: boolean;
   isHeroTurn: boolean;
   actionUsed?: boolean;
+  bonusActionUsed?: boolean;
+  reactionUsed?: boolean;
+  movementUsed?: number;
+  movementBonusSquares?: number;
   busy?: boolean;
   isMinimized?: boolean;
   onToggleMinimized?: (minimized: boolean) => void;
@@ -96,6 +108,7 @@ interface BottomPlayerHudProps {
 export function BottomPlayerHud({
   activeHero,
   party,
+  spellEffects = [],
   onSelectHero,
   onActionSelect,
   onOpenInventory,
@@ -107,6 +120,10 @@ export function BottomPlayerHud({
   isCombat,
   isHeroTurn,
   actionUsed,
+  bonusActionUsed = false,
+  reactionUsed = false,
+  movementUsed = 0,
+  movementBonusSquares = 0,
   busy,
   isMinimized: isMinimizedProp,
   onToggleMinimized
@@ -142,21 +159,218 @@ export function BottomPlayerHud({
   const hpPct = Math.min(100, Math.max(0, (currentHp / maxHp) * 100));
   const delayedHpPct = Math.min(100, Math.max(0, (delayedHp / maxHp) * 100));
 
-  // Determine available spells (strictly adhering to D&D 5e official class spellcasting)
-  const isSpellcaster =
-    ['Mago', 'Clérigo', 'Druida', 'Bruxo', 'Bardo', 'Feiticeiro'].includes(activeHero.className) ||
-    (['Paladino', 'Patrulheiro'].includes(activeHero.className) && activeHero.level >= 2);
+  // Only spells actually known/prepared by THIS character.
+  const heroSpells =
+    getCharacterSpellActions(
+      activeHero
+    );
 
-  const heroSpells = SPELLS_CATALOG.filter((s) => {
-    // Non-casters have no spells unless explicitly known in their sheet
-    if (!isSpellcaster && !activeHero.spells) return false;
-    const isClassSpell = s.classes?.includes(activeHero.className);
-    const isExplicitlyKnown = activeHero.spells && activeHero.spells.toLowerCase().includes(s.name.toLowerCase());
-    if (!isClassSpell && !isExplicitlyKnown) return false;
-    if (s.level === 0) return true;
-    const slotTotal = activeHero.slots[s.level - 1] || 0;
-    return slotTotal > 0 || isExplicitlyKnown;
-  });
+
+  const activeSpellEffects =
+    spellEffects.filter(
+      (effect) =>
+        effect.casterId ===
+          activeHero.id ||
+        effect.characterTargetIds
+          .includes(
+            activeHero.id
+          )
+    );
+
+  const concentrationEffect =
+    activeSpellEffects.find(
+      (effect) =>
+        effect.concentration &&
+        (
+          effect.casterId ===
+            activeHero.id ||
+          effect.id ===
+            activeHero
+              .concentrationEffectId
+        )
+    );
+
+  const renderSpellCard = (
+    s:
+      ReturnType<
+        typeof getCharacterSpellActions
+      >[number]
+  ) => {
+    const isCantrip =
+      s.level === 0;
+
+    const availableSlots =
+      isCantrip
+        ? 99
+        : Math.max(
+            0,
+            (
+              activeHero.slots[
+                s.level - 1
+              ] ||
+              0
+            ) -
+            (
+              activeHero.usedSlots[
+                s.level - 1
+              ] ||
+              0
+            )
+          );
+
+    const isDepleted =
+      !isCantrip &&
+      availableSlots <= 0;
+
+    const economySpent =
+      isCombat &&
+      (
+        (
+          s.economyType ===
+            'action' &&
+          actionUsed
+        ) ||
+        (
+          s.economyType ===
+            'bonus' &&
+          bonusActionUsed
+        ) ||
+        (
+          s.economyType ===
+            'reaction' &&
+          reactionUsed
+        )
+      );
+
+    const unavailable =
+      isDepleted ||
+      economySpent ||
+      Boolean(busy);
+
+    const economyLabel =
+      s.economyType ===
+        'bonus'
+        ? 'Bonus'
+        : s.economyType ===
+            'reaction'
+          ? 'Reacao'
+          : 'Acao';
+
+    return (
+      <div
+        key={s.id}
+        data-srd-spell-economy={s.economyType}
+        data-srd-target-mode={s.targetMode}
+        onClick={() => {
+          if (unavailable) {
+            return;
+          }
+
+          handleSelectAction({
+            id:
+              s.id,
+
+            name:
+              s.name,
+
+            canonicalName:
+              s.canonicalName,
+
+            category:
+              'spell',
+
+            spellLevel:
+              s.level,
+
+            rangeSquares:
+              s.rangeSquares,
+
+            damageFormula:
+              s.damageFormula,
+
+            healFormula:
+              s.healFormula,
+
+            aoeRadius:
+              s.aoeRadiusSquares,
+
+            description:
+              s.description,
+
+            economyType:
+              s.economyType,
+
+            targetMode:
+              s.targetMode,
+
+            concentration:
+              s.concentration
+          });
+        }}
+        className={
+          'p-2 rounded-xl border shadow-sm transition-all flex flex-col justify-between ' +
+          (
+            unavailable
+              ? 'bg-stone-950/60 border-stone-800 opacity-50 cursor-not-allowed'
+              : 'bg-stone-900/90 hover:bg-stone-850 border-stone-700/80 hover:border-purple-400/80 cursor-pointer'
+          )
+        }
+      >
+        <div className="flex items-center justify-between mb-0.5">
+          <div className="flex items-center gap-1.5 truncate">
+            <Sparkles
+              size={13}
+              className={
+                isCantrip
+                  ? 'text-cyan-400'
+                  : 'text-purple-400'
+              }
+            />
+
+            <strong className="text-stone-100 text-xs font-semibold truncate">
+              {s.name}
+            </strong>
+          </div>
+
+          <span className="text-[9px] font-mono font-bold px-1 rounded shrink-0 bg-purple-950 text-purple-300 border border-purple-800/60">
+            {isCantrip
+              ? 'Truque'
+              : 'C' + s.level}
+            {' / '}
+            {economyLabel}
+          </span>
+        </div>
+
+        <div className="text-[11px] text-stone-400 leading-tight mb-1 truncate">
+          {s.description}
+        </div>
+
+        <div className="flex items-center justify-between text-[10px] font-mono border-t border-stone-800 pt-0.5">
+          {s.damageFormula ? (
+            <span className="text-red-400 font-bold">
+              {s.damageFormula} Dano
+            </span>
+          ) : s.healFormula ? (
+            <span className="text-emerald-400 font-bold">
+              {s.healFormula} Cura
+            </span>
+          ) : (
+            <span className="text-stone-400">
+              {s.concentration
+                ? 'Concentracao'
+                : 'Magia SRD'}
+            </span>
+          )}
+
+          <span className="text-stone-400">
+            {s.rangeSquares * 1.5}m
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+
 
   return (
     <div className="w-full flex flex-col items-center gap-1 select-none z-30 shrink-0 pointer-events-auto">
@@ -432,7 +646,12 @@ export function BottomPlayerHud({
                         className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-cyan-950/60 text-cyan-300 border border-cyan-800/60"
                         title="Deslocamento total do personagem"
                       >
-                        Mov: {activeHero.speed}m
+                        Mov: {Math.max(
+                          0,
+                          Math.floor(activeHero.speed / 1.5) +
+                            movementBonusSquares -
+                            movementUsed
+                        )}q
                       </span>
                       <span
                         className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-950/60 text-purple-300 border border-purple-800/60 hidden md:inline"
@@ -461,6 +680,43 @@ export function BottomPlayerHud({
                 )}
               </div>
             </div>
+
+            {activeSpellEffects.length > 0 && (
+              <div
+                data-srd-active-effects="true"
+                className="w-full px-2 py-1 flex items-center gap-1.5 overflow-x-auto border-b border-purple-900/40 bg-purple-950/20"
+              >
+                {concentrationEffect && (
+                  <span
+                    data-srd-concentration="true"
+                    className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold border border-purple-500/70 bg-purple-950/80 text-purple-200"
+                    title={concentrationEffect.description}
+                  >
+                    {'Concentra\u00E7\u00E3o: '}
+                    {concentrationEffect.spellName}
+                  </span>
+                )}
+
+                {activeSpellEffects
+                  .filter(
+                    (effect) =>
+                      !concentrationEffect ||
+                      effect.id !==
+                        concentrationEffect.id
+                  )
+                  .map(
+                    (effect) => (
+                      <span
+                        key={effect.id}
+                        className="shrink-0 px-2 py-0.5 rounded-full text-[10px] border border-cyan-900/70 bg-cyan-950/40 text-cyan-200"
+                        title={effect.description}
+                      >
+                        {effect.spellName}
+                      </span>
+                    )
+                  )}
+              </div>
+            )}
 
             {/* Action Cards Area — Compact Height (~130px) so the Map Commands the Screen */}
             <div className="w-full h-34 sm:h-32 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-stone-700">
@@ -533,63 +789,16 @@ export function BottomPlayerHud({
                     </div>
                   </div>
 
-                  {/* 1-Action Spells (filtered to character's spellbook) */}
-                  {heroSpells.map((s) => {
-                    const isCantrip = s.level === 0;
-                    const availableSlots = isCantrip ? 99 : Math.max(0, (activeHero.slots[s.level - 1] || 0) - (activeHero.usedSlots[s.level - 1] || 0));
-                    const isDepleted = !isCantrip && availableSlots <= 0;
-
-                    return (
-                      <div
-                        key={s.id}
-                        onClick={() => {
-                          if (isDepleted) return;
-                          handleSelectAction({
-                            id: s.id,
-                            name: s.name,
-                            category: 'spell',
-                            spellLevel: s.level,
-                            rangeSquares: s.rangeSquares,
-                            damageFormula: s.damageFormula,
-                            healFormula: s.healFormula,
-                            aoeRadius: s.aoeRadiusSquares,
-                            description: s.description,
-                            economyType: 'action'
-                          });
-                        }}
-                        className={`p-2 rounded-xl border shadow-sm transition-all flex flex-col justify-between ${
-                          isDepleted
-                            ? 'bg-stone-950/60 border-stone-800 opacity-50 cursor-not-allowed'
-                            : 'bg-stone-900/90 hover:bg-stone-850 border-stone-700/80 hover:border-purple-400/80 cursor-pointer'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-0.5">
-                          <div className="flex items-center gap-1.5 truncate">
-                            <Sparkles size={13} className={isCantrip ? 'text-cyan-400' : 'text-purple-400'} />
-                            <strong className="text-stone-100 text-xs font-semibold truncate">{s.name}</strong>
-                          </div>
-                          <span className={`text-[10px] font-mono font-bold px-1 rounded shrink-0 ${
-                            isCantrip ? 'bg-cyan-950 text-cyan-300 border border-cyan-800/60' : 'bg-purple-950 text-purple-300 border border-purple-800/60'
-                          }`}>
-                            {isCantrip ? 'Truque' : `Círc. ${s.level}`}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-stone-400 leading-tight mb-1 truncate">
-                          {s.description}
-                        </div>
-                        <div className="flex items-center justify-between text-[10px] font-mono border-t border-stone-800 pt-0.5">
-                          {s.damageFormula ? (
-                            <span className="text-red-400 font-bold">{s.damageFormula} Dano</span>
-                          ) : s.healFormula ? (
-                            <span className="text-emerald-400 font-bold">{s.healFormula} Cura</span>
-                          ) : (
-                            <span className="text-stone-400">Magia 5e</span>
-                          )}
-                          <span className="text-stone-400">{s.rangeSquares * 1.5}m</span>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {/* SRD Action Spells */}
+                  {heroSpells
+                    .filter(
+                      (s) =>
+                        s.economyType ===
+                        'action'
+                    )
+                    .map(
+                      renderSpellCard
+                    )}
 
                   {/* Consumable Potion */}
                   <div
@@ -694,6 +903,19 @@ export function BottomPlayerHud({
               {/* ═══ TAB 2: AÇÃO BÔNUS (HABILIDADES DE CLASSE, ARMA SECUNDÁRIA, RETOMAR FÔLEGO, ETC.) ═══ */}
               {activeTab === 'bonus' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                  <React.Fragment>
+                    <div className="hidden" data-srd-bonus-spells="true" />
+
+                    {heroSpells
+                      .filter(
+                        (s) =>
+                          s.economyType ===
+                          'bonus'
+                      )
+                      .map(
+                        renderSpellCard
+                      )}
+                  </React.Fragment>
                   {/* Fighter Class: Second Wind */}
                   {activeHero.className === 'Guerreiro' && (
                     <div
@@ -758,7 +980,7 @@ export function BottomPlayerHud({
                       </div>
                       <div className="flex items-center justify-between text-[10px] font-mono border-t border-stone-800 pt-0.5">
                         <span className="text-red-400 font-bold">+2 Dano / Resist.</span>
-                        <span className="text-stone-400">10 Rodadas</span>
+                        <span className="text-stone-400">At? 10 min</span>
                       </div>
                     </div>
                   )}
@@ -1013,40 +1235,20 @@ export function BottomPlayerHud({
                     </div>
                   </div>
 
-                  {/* Shield Spell (Escudo Arcano) for Spellcasters */}
-                  {['Mago', 'Feiticeiro', 'Bruxo'].includes(activeHero.className) && (
-                    <div
-                      onClick={() =>
-                        handleSelectAction({
-                          id: 'escudo-arcano',
-                          name: 'Escudo Arcano (Shield)',
-                          category: 'spell',
-                          rangeSquares: 0,
-                          spellLevel: 1,
-                          description: 'Reação quando você é atingido por um ataque: concede +5 na sua Classe de Armadura até o início do seu próximo turno.',
-                          economyType: 'reaction'
-                        })
-                      }
-                      className="p-2 rounded-xl bg-stone-900/90 hover:bg-stone-850 border border-cyan-700/70 hover:border-cyan-400 cursor-pointer shadow-sm transition-all flex flex-col justify-between"
-                    >
-                      <div className="flex items-center justify-between mb-0.5">
-                        <div className="flex items-center gap-1.5">
-                          <Shield size={13} className="text-cyan-400" />
-                          <strong className="text-stone-100 text-xs font-semibold">Escudo Arcano</strong>
-                        </div>
-                        <span className="text-[10px] font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-800/60 px-1 rounded">
-                          Reação (C1)
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-stone-400 leading-tight mb-1 truncate">
-                        Concede +5 de CA ao sofrer ataque.
-                      </div>
-                      <div className="flex items-center justify-between text-[10px] font-mono border-t border-stone-800 pt-0.5">
-                        <span className="text-cyan-300 font-bold">+5 CA</span>
-                        <span className="text-stone-400">1 Rodada</span>
-                      </div>
-                    </div>
-                  )}
+                  {/* SRD Reaction Spells */}
+                  <React.Fragment>
+                    <div className="hidden" data-srd-reaction-spells="true" />
+
+                    {heroSpells
+                      .filter(
+                        (s) =>
+                          s.economyType ===
+                          'reaction'
+                      )
+                      .map(
+                        renderSpellCard
+                      )}
+                  </React.Fragment>
 
                   {/* Ready Action (Preparar Ação) */}
                   <div

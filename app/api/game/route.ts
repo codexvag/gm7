@@ -27,6 +27,7 @@ import {
   validateAttackRange,
   validateSpellRange,
   validateMovement,
+  getWeaponMaxRange,
   ITEMS_CATALOG,
   syncPartyProgression,
   mergePartyProgress,
@@ -39,6 +40,49 @@ import {
 import { generateMobLoot, registerProceduralItem, type ProceduralItem } from '@/lib/procedural-items';
 import { getCreatureProfile, prepareEnemyForCombat } from '@/lib/creature-profiles';
 import { addInventoryItem, removeInventoryItem, getInventoryQuantity, stripInventoryQuantity } from '@/lib/inventory-utils';
+import {
+  applyLevelUpSpellChoices,
+  validateCharacterSpellLoadout,
+  isCharacterSpellPrepared,
+  reprepareCharacterSpells
+} from '@/lib/srd-spellbook';
+import {
+  getSecondWindMaxUses,
+  getRageMaxUses,
+  getRageDamageBonus,
+  addFormulaBonus,
+  getRangerFreeHuntersMarkMaxUses,
+  getWizardArcaneRecoveryLimit,
+  hasMysticArcanumAvailable
+} from '@/lib/srd-combat';
+import {
+  getSrdRuntimeSpellProfile,
+  resolveSrdSpellRuntime,
+  tickSrdSpellEffects,
+  applySrdCharacterDamage,
+  applySrdMarkedAttackDamage,
+  rollSrdCharacterSavingThrow} from '@/lib/srd-spell-runtime';
+import {
+  resolveSrdSpellWithAdvancedDamage,
+  applySrdAdvancedAttackToEnemy,
+  applySrdTypedCharacterDamage,
+  inferSrdDamageTypeFromText,
+  inferSrdWeaponDamageType,
+  canUseSrdReaction,
+  hasSrdAdvancedCondition,
+  breakSrdInvisibilityForActor,
+  tryAutoCounterspellCharacterCast
+} from '@/lib/srd-advanced-combat';
+import {
+  reconcileLegacyProgression,
+  resolveEnemyDefeatProgression,
+  startAdventureForHero,
+  continueAdventureForHero
+} from '@/lib/mmo-progression';
+import {
+  getNextCampaignDestination,
+  markCampaignProof
+} from '@/lib/campaign-progression';
 import { readCompactWorldContext, evaluateDirectorPacing, executeDirectorIntent } from '@/lib/sandbox-director';
 import { isGridTileWalkable, MAP_COLLISION_PROFILES, type CollisionPolygon } from '@/lib/collision-system';
 import fs from 'node:fs';
@@ -448,6 +492,144 @@ export async function POST(req: NextRequest) {
       }
     };
 
+    const rewardSrdEnemyDefeat = (
+      killer: Character,
+      defeated: Enemy,
+      source: string
+    ) => {
+      if (
+        defeated.hp > 0
+      ) {
+        return;
+      }
+
+      resolveEnemyDefeatProgression(
+        s,
+        killer,
+        defeated
+      );
+
+      const xpReward =
+        getCreatureProfile(
+          defeated.name
+        ).xpReward;
+
+      const recipients =
+        killer.partyId
+          ? s.characters.filter(
+              (character) =>
+                character.partyId ===
+                killer.partyId
+            )
+          : [killer];
+
+      for (
+        const character of
+        recipients
+      ) {
+        character.xp =
+          (character.xp || 0) +
+          xpReward;
+
+        touchChar(character);
+      }
+
+      log(
+        '? ' +
+          (
+            killer.partyId
+              ? 'O grupo de ' +
+                killer.name
+              : killer.name
+          ) +
+          ' recebeu +' +
+          xpReward +
+          ' XP pela vit?ria contra ' +
+          defeated.name +
+          ' (' +
+          source +
+          ').',
+        'gm'
+      );
+
+      if (!s.corpses) {
+        s.corpses = [];
+      }
+
+      const alreadyExists =
+        s.corpses.some(
+          (corpse) =>
+            corpse.id.includes(
+              defeated.id
+            )
+        );
+
+      if (
+        !alreadyExists
+      ) {
+        try {
+          const loot =
+            generateMobLoot(
+              defeated.name,
+              defeated.maxHp || 10,
+              (s.act || 1) as any
+            );
+
+          const corpse:
+            GroundCorpse = {
+              id:
+                'corpse-' +
+                defeated.id +
+                '-' +
+                Date.now(),
+
+              name:
+                'Restos de ' +
+                defeated.name,
+
+              enemyName:
+                defeated.name,
+
+              x:
+                defeated.x ?? 4,
+
+              y:
+                defeated.y ?? 4,
+
+              gold:
+                loot.gold,
+
+              items:
+                loot.items.map(
+                  (item) =>
+                    item.id
+                ),
+
+              biome:
+                defeated.biome ||
+                killer.biome ||
+                s.biome ||
+                'forest',
+
+              slainBy:
+                killer.name,
+
+              createdAt:
+                Date.now()
+            };
+
+          s.corpses.push(
+            corpse
+          );
+        } catch (error) {
+          console.error(
+            '[SRD corpse]',
+            error
+          );
+        }
+      }
+    };
+
     let clientAttackResult: AttackResult | null = null;
     let clientHealResult: { targetId: string; targetName: string; healAmount: number; hpAfter: number; maxHp: number } | null = null;
     let clientLootResult: { gold: number; items: string[]; x: number; y: number } | null = null;
@@ -460,6 +642,7 @@ export async function POST(req: NextRequest) {
         const isHpOrConditionUpdate = Boolean(old && (old.hp !== rawChar?.hp || JSON.stringify(old.conditions) !== JSON.stringify(rawChar?.conditions)));
         if (s.combat && !isEquipmentUpdate && !isHpOrConditionUpdate && !owner) throw Error('Encerre o combate antes de editar atributos da ficha.');
         let next = validateCharacter(rawChar);
+        validateCharacterSpellLoadout(next);
         next = calculateEquippedStats(next);
         touchChar(next);
         if (old && (isMmo ? old.owner && old.owner !== user.userId : (!owner && old.owner !== user.userId))) {
@@ -498,6 +681,1027 @@ export async function POST(req: NextRequest) {
         log(`${user.displayName}: ${a.formula} â†’ [${result.results.join(', ')}] ${result.bonus ? '+ (' + result.bonus + ') ' : ''}= ${result.total}`, 'roll');
         break;
       }
+      case 'tacticalAction': {
+        const p = own();
+
+        const actionId =
+          String(
+            a.actionId ||
+            a.id ||
+            ''
+          );
+
+        const isMyTurn =
+          !s.combat ||
+          !s.order.includes(
+            p.id
+          ) ||
+          s.order[
+            s.turn
+          ] === p.id;
+
+        const requireTurn =
+          () => {
+            if (
+              s.combat &&
+              !isMyTurn
+            ) {
+              throw Error(
+                'Aguarde o turno de ' +
+                p.name +
+                '.'
+              );
+            }
+          };
+
+        const spendAction =
+          () => {
+            requireTurn();
+
+            /* SRD_3B_C1_SLOW_ACTION_GATE */
+            if (
+              s.combat &&
+              s.actionUsed &&
+              hasSrdAdvancedCondition(
+                p,
+                'slow',
+                'lentidao'
+              )
+            ) {
+              throw Error(
+                'Slow permite Acao ou Acao Bonus, nao ambas.'
+              );
+            }
+
+            if (
+              s.combat &&
+              s.bonusActionUsed &&
+              hasSrdAdvancedCondition(
+                p,
+                'slow',
+                'lentidao'
+              )
+            ) {
+              throw Error(
+                'Slow permite Acao ou Acao Bonus, nao ambas.'
+              );
+            }
+
+            if (
+              s.combat &&
+              s.actionUsed
+            ) {
+              throw Error(
+                'Sua A??o j? foi utilizada neste turno.'
+              );
+            }
+
+            if (s.combat) {
+              s.actionUsed =
+                true;
+            }
+          };
+
+        const spendBonus =
+          () => {
+            requireTurn();
+
+            if (
+              s.combat &&
+              s.bonusActionUsed
+            ) {
+              throw Error(
+                'Sua A??o B?nus j? foi utilizada neste turno.'
+              );
+            }
+
+            if (s.combat) {
+              s.bonusActionUsed =
+                true;
+            }
+          };
+
+        s.reactionUsedBy =
+          s.reactionUsedBy ||
+          {};
+
+        s.reactionPolicyBy =
+          s.reactionPolicyBy ||
+          {};
+
+        if (
+          actionId ===
+          'ataque-oportunidade'
+        ) {
+          s.reactionPolicyBy[
+            p.id
+          ] =
+            'opportunity';
+
+          log(
+            '??? ' +
+              p.name +
+              ' priorizar? Ataques de Oportunidade com sua Rea??o.',
+            'player'
+          );
+
+          break;
+        }
+
+        if (
+          actionId ===
+          'escudo-arcano'
+        ) {
+          const knowsShield =
+            [
+              'Mago',
+              'Feiticeiro'
+            ].includes(
+              p.className
+            ) ||
+            String(
+              p.spells ||
+              ''
+            )
+              .toLowerCase()
+              .includes(
+                'escudo'
+              );
+
+          if (
+            !knowsShield
+          ) {
+            throw Error(
+              p.name +
+              ' n?o conhece Escudo Arcano.'
+            );
+          }
+
+          if (
+            (
+              p.usedSlots[0] ||
+              0
+            ) >=
+            (
+              p.slots[0] ||
+              0
+            )
+          ) {
+            throw Error(
+              'Nenhum espa?o de magia de n?vel 1 dispon?vel para Escudo Arcano.'
+            );
+          }
+
+          s.reactionPolicyBy[
+            p.id
+          ] =
+            'shield';
+
+          log(
+            '? ' +
+              p.name +
+              ' passa a reservar sua Rea??o para Escudo Arcano. O servidor o conjurar? automaticamente quando +5 CA puder bloquear um ataque.',
+            'player'
+          );
+
+          break;
+        }
+
+        /* SRD_3B_C1_COUNTERSPELL_POLICY */
+        if (
+          actionId === 'counterspell' ||
+          actionId === 'contra-magica'
+        ) {
+          if (
+            !isCharacterSpellPrepared(
+              p,
+              'Counterspell'
+            )
+          ) {
+            throw Error(
+              p.name +
+                ' nao possui Counterspell preparada.'
+            );
+          }
+
+          if (!canUseSrdReaction(p)) {
+            throw Error(
+              'Slow impede Reacoes.'
+            );
+          }
+
+          const hasCounterspellSlot =
+            p.slots.some(
+              (total, index) =>
+                index >= 2 &&
+                (p.usedSlots[index] || 0) <
+                  (total || 0)
+            );
+
+          if (!hasCounterspellSlot) {
+            throw Error(
+              'Counterspell requer um espaco de magia de nivel 3 ou superior.'
+            );
+          }
+
+          s.reactionPolicyBy[p.id] =
+            'counterspell';
+
+          log(
+            p.name +
+              ' reserva sua Reacao para Counterspell.',
+            'player'
+          );
+
+          break;
+        }
+
+        if (
+          actionId ===
+          'preparar-acao'
+        ) {
+          spendAction();
+
+          s.reactionPolicyBy[
+            p.id
+          ] =
+            'ready-melee';
+
+          log(
+            '?? ' +
+              p.name +
+              ' prepara um ataque corpo a corpo contra a primeira criatura hostil que entrar em seu alcance antes do pr?ximo turno.',
+            'player'
+          );
+
+          break;
+        }
+
+        if (
+          actionId ===
+          'disparar'
+        ) {
+          spendAction();
+
+          const extra =
+            Math.floor(
+              p.speed /
+              1.5
+            );
+
+          s.movementBonusSquares =
+            (
+              s.movementBonusSquares ||
+              0
+            ) +
+            extra;
+
+          log(
+            '?? ' +
+              p.name +
+              ' usa Dash e recebe +' +
+              extra +
+              ' quadrados de movimento neste turno.',
+            'player'
+          );
+
+          break;
+        }
+
+        if (
+          actionId ===
+          'desengajar'
+        ) {
+          spendAction();
+
+          s.disengagedActorId =
+            p.id;
+
+          log(
+            '?? ' +
+              p.name +
+              ' usa Desengajar. Seu movimento n?o provoca Ataques de Oportunidade neste turno.',
+            'player'
+          );
+
+          break;
+        }
+
+        if (
+          actionId ===
+          'acao-ardilosa-desengajar'
+        ) {
+          if (
+            p.className !==
+              'Ladino' ||
+            p.level < 2
+          ) {
+            throw Error(
+              'A??o Ardilosa exige Ladino de n?vel 2 ou superior.'
+            );
+          }
+
+          spendBonus();
+
+          s.disengagedActorId =
+            p.id;
+
+          log(
+            '??? ' +
+              p.name +
+              ' usa A??o Ardilosa para Desengajar como A??o B?nus.',
+            'player'
+          );
+
+          break;
+        }
+
+        if (
+          actionId ===
+          'esquivar'
+        ) {
+          spendAction();
+
+          if (
+            !p.conditions.some(
+              (condition) =>
+                condition
+                  .toLowerCase()
+                  .includes(
+                    'esquiv'
+                  )
+            )
+          ) {
+            p.conditions.push(
+              'Esquivando'
+            );
+          }
+
+          touchChar(p);
+
+          log(
+            '??? ' +
+              p.name +
+              ' usa Esquivar at? o in?cio do pr?ximo turno.',
+            'player'
+          );
+
+          break;
+        }
+
+        if (
+          actionId ===
+          'esconder'
+        ) {
+          spendAction();
+
+          const biome =
+            String(
+              p.biome ||
+              s.biome ||
+              'village'
+            );
+
+          const maxBound =
+            biome ===
+              'village'
+              ? 7
+              : 15;
+
+          const gridSize =
+            maxBound + 1;
+
+          const zones =
+            getActiveZonesForBiome(
+              biome
+            );
+
+          let hasCover =
+            false;
+
+          for (
+            let dx = -1;
+            dx <= 1;
+            dx++
+          ) {
+            for (
+              let dy = -1;
+              dy <= 1;
+              dy++
+            ) {
+              if (
+                dx === 0 &&
+                dy === 0
+              ) {
+                continue;
+              }
+
+              const nx =
+                p.x + dx;
+
+              const ny =
+                p.y + dy;
+
+              if (
+                nx < 0 ||
+                ny < 0 ||
+                nx > maxBound ||
+                ny > maxBound
+              ) {
+                continue;
+              }
+
+              if (
+                !isGridTileWalkable(
+                  biome as any,
+                  nx,
+                  ny,
+                  gridSize,
+                  zones
+                )
+              ) {
+                hasCover =
+                  true;
+              }
+            }
+          }
+
+          if (!hasCover) {
+            throw Error(
+              'Para se Esconder, aproxime-se de cobertura ou de uma ?rea obstru?da.'
+            );
+          }
+
+          const rollResult =
+            d20();
+
+          const stealthBonus =
+            mod(
+              p.stats[1]
+            ) +
+            (
+              p.skills.includes(
+                'Furtividade'
+              )
+                ? prof(
+                    p.level
+                  )
+                : 0
+            ) +
+            (
+              p.expertise.includes(
+                'Furtividade'
+              )
+                ? prof(
+                    p.level
+                  )
+                : 0
+            ) -
+            2 *
+              (
+                p.exhaustion ||
+                0
+              );
+
+          const total =
+            rollResult.raw +
+            stealthBonus;
+
+          p.conditions =
+            p.conditions.filter(
+              (condition) =>
+                !condition
+                  .toLowerCase()
+                  .includes(
+                    'oculto'
+                  )
+            );
+
+          if (
+            total >= 15
+          ) {
+            p.conditions.push(
+              'Invis?vel (Oculto)'
+            );
+
+            log(
+              '??? ' +
+                p.name +
+                ' passa no teste de Furtividade CD 15 (' +
+                total +
+                ') e fica Oculto.',
+              'roll'
+            );
+          } else {
+            log(
+              '??? ' +
+                p.name +
+                ' falha no teste de Furtividade CD 15 (' +
+                total +
+                ').',
+              'roll'
+            );
+          }
+
+          touchChar(p);
+
+          break;
+        }
+
+        if (
+          actionId ===
+          'levantar'
+        ) {
+          requireTurn();
+
+          const prone =
+            p.conditions.some(
+              (condition) => {
+                const normalized =
+                  condition
+                    .normalize('NFD')
+                    .replace(
+                      /[\u0300-\u036f]/g,
+                      ''
+                    )
+                    .toLowerCase();
+
+                return (
+                  normalized.includes(
+                    'caido'
+                  ) ||
+                  normalized.includes(
+                    'prone'
+                  )
+                );
+              }
+            );
+
+          if (!prone) {
+            throw Error(
+              p.name +
+              ' n?o est? Ca?do.'
+            );
+          }
+
+          const baseSquares =
+            Math.floor(
+              p.speed /
+              1.5
+            );
+
+          const cost =
+            Math.ceil(
+              baseSquares /
+              2
+            );
+
+          const budget =
+            baseSquares +
+            (
+              s.movementBonusSquares ||
+              0
+            );
+
+          const used =
+            s.movementUsed ||
+            0;
+
+          if (
+            s.combat &&
+            used + cost >
+              budget
+          ) {
+            throw Error(
+              'Movimento insuficiente para se levantar.'
+            );
+          }
+
+          s.movementUsed =
+            used + cost;
+
+          p.conditions =
+            p.conditions.filter(
+              (condition) => {
+                const normalized =
+                  condition
+                    .normalize('NFD')
+                    .replace(
+                      /[\u0300-\u036f]/g,
+                      ''
+                    )
+                    .toLowerCase();
+
+                return (
+                  !normalized.includes(
+                    'caido'
+                  ) &&
+                  !normalized.includes(
+                    'prone'
+                  )
+                );
+              }
+            );
+
+          touchChar(p);
+
+          log(
+            '? ' +
+              p.name +
+              ' se levanta gastando metade do deslocamento.',
+            'player'
+          );
+
+          break;
+        }
+
+        if (
+          actionId ===
+          'retomar-folego'
+        ) {
+          if (
+            p.className !==
+            'Guerreiro'
+          ) {
+            throw Error(
+              'Retomar o F?lego ? uma habilidade de Guerreiro.'
+            );
+          }
+
+          spendBonus();
+
+          const maximum =
+            getSecondWindMaxUses(
+              p.level
+            );
+
+          const spent =
+            p.secondWindSpent ||
+            0;
+
+          if (
+            spent >= maximum
+          ) {
+            throw Error(
+              'Todos os usos de Retomar o F?lego foram gastos.'
+            );
+          }
+
+          const healing =
+            roll(
+              '1d10+' +
+              p.level
+            ).total;
+
+          const before =
+            p.hp;
+
+          p.hp =
+            Math.min(
+              p.maxHp,
+              p.hp +
+                healing
+            );
+
+          p.secondWindSpent =
+            spent + 1;
+
+          touchChar(p);
+
+          clientHealResult = {
+            targetId:
+              p.id,
+            targetName:
+              p.name,
+            healAmount:
+              p.hp -
+              before,
+            hpAfter:
+              p.hp,
+            maxHp:
+              p.maxHp
+          };
+
+          log(
+            '?? ' +
+              p.name +
+              ' usa Retomar o F?lego e recupera ' +
+              (
+                p.hp -
+                before
+              ) +
+              ' PV. Usos restantes: ' +
+              (
+                maximum -
+                (
+                  p.secondWindSpent ||
+                  0
+                )
+              ) +
+              '.',
+            'roll'
+          );
+
+          break;
+        }
+
+        if (
+          actionId ===
+          'furia-barbara'
+        ) {
+          if (
+            p.className !==
+            'B?rbaro'
+          ) {
+            throw Error(
+              'F?ria exige a classe B?rbaro.'
+            );
+          }
+
+          spendBonus();
+
+          if (p.raging) {
+            p.rageEndsAtRound =
+              (s.round || 1) +
+              1;
+
+            log(
+              '?? ' +
+                p.name +
+                ' usa a A??o B?nus para prolongar sua F?ria.',
+              'player'
+            );
+
+            touchChar(p);
+
+            break;
+          }
+
+          const armor =
+            p.equipment?.armor
+              ? ITEMS_CATALOG[
+                  p.equipment.armor
+                ]
+              : undefined;
+
+          const armorName =
+            String(
+              armor?.name ||
+              ''
+            )
+              .normalize('NFD')
+              .replace(
+                /[\u0300-\u036f]/g,
+                ''
+              )
+              .toLowerCase();
+
+          if (
+            armorName.includes(
+              'cota de malha'
+            ) ||
+            armorName.includes(
+              'placas'
+            )
+          ) {
+            throw Error(
+              'F?ria n?o pode ser iniciada usando armadura pesada.'
+            );
+          }
+
+          const maximum =
+            getRageMaxUses(
+              p.level
+            );
+
+          const spent =
+            p.rageSpent ||
+            0;
+
+          if (
+            spent >= maximum
+          ) {
+            throw Error(
+              'Todos os usos de F?ria foram gastos.'
+            );
+          }
+
+          p.rageSpent =
+            spent + 1;
+
+          p.raging =
+            true;
+
+          p.rageEndsAtRound =
+            (s.round || 1) +
+            1;
+
+          if (
+            !p.conditions.some(
+              (condition) =>
+                condition
+                  .normalize('NFD')
+                  .replace(
+                    /[\u0300-\u036f]/g,
+                    ''
+                  )
+                  .toLowerCase()
+                  .includes(
+                    'em furia'
+                  )
+            )
+          ) {
+            p.conditions.push(
+              'Em F?ria'
+            );
+          }
+
+          touchChar(p);
+
+          log(
+            '?? ' +
+              p.name +
+              ' entra em F?ria. Resist?ncia a dano f?sico, vantagem em testes de For?a e b?nus de dano de F?ria est?o ativos.',
+            'player'
+          );
+
+          break;
+        }
+
+        if (
+          actionId ===
+          'attack-offhand'
+        ) {
+          requireTurn();
+
+          if (
+            s.combat &&
+            s.bonusActionUsed
+          ) {
+            throw Error(
+              'Sua A??o B?nus j? foi utilizada neste turno.'
+            );
+          }
+
+          const offhand =
+            p.equipment?.offHand
+              ? ITEMS_CATALOG[
+                  p.equipment.offHand
+                ]
+              : undefined;
+
+          if (
+            !offhand ||
+            offhand.type !==
+              'arma' ||
+            !offhand.damage
+          ) {
+            throw Error(
+              'Equipe uma arma leve v?lida na m?o secund?ria para usar este ataque.'
+            );
+          }
+
+          const target =
+            s.enemies.find(
+              (enemy) =>
+                enemy.id ===
+                  String(
+                    a.targetId ||
+                    a.target ||
+                    ''
+                  ) &&
+                enemy.hp > 0
+            );
+
+          if (!target) {
+            throw Error(
+              'Selecione um alvo v?lido.'
+            );
+          }
+
+          if (
+            getGridDistance(
+              p,
+              target
+            ) > 1
+          ) {
+            throw Error(
+              'A arma secund?ria est? fora de alcance.'
+            );
+          }
+
+          if (s.combat) {
+            s.bonusActionUsed =
+              true;
+          }
+
+          const abilityIndex =
+            offhand.finesse &&
+            mod(p.stats[1]) >
+              mod(p.stats[0])
+              ? 1
+              : 0;
+
+          const attackBonus =
+            prof(p.level) +
+            mod(
+              p.stats[
+                abilityIndex
+              ]
+            ) -
+            2 *
+              (
+                p.exhaustion ||
+                0
+              );
+
+          const rageBonus =
+            p.raging &&
+            abilityIndex === 0
+              ? getRageDamageBonus(
+                  p.level
+                )
+              : 0;
+
+          const result =
+            resolveAttack(
+              {
+                name:
+                  p.name +
+                  ' ? Arma Secund?ria',
+                attack:
+                  attackBonus,
+                damage:
+                  addFormulaBonus(
+                    offhand.damage,
+                    rageBonus
+                  ),
+                conditions:
+                  p.conditions,
+                weapon:
+                  offhand.name
+              },
+              {
+                id:
+                  target.id,
+                name:
+                  target.name,
+                ac:
+                  target.ac,
+                hp:
+                  target.hp,
+                conditions:
+                  target.conditions
+              },
+              'normal',
+              false
+            );
+
+
+          clientAttackResult =
+            result;
+
+          /* SRD_3B_C1_OFFHAND_PIPELINE */
+          breakSrdInvisibilityForActor(
+            s,
+            p.id
+          );
+
+          applySrdAdvancedAttackToEnemy(
+            s,
+            p,
+            target,
+            result,
+            offhand.name
+          );
+
+          touchChar(target);
+          touchChar(p);
+
+          log(
+            result.text,
+            'roll'
+          );
+
+          if (
+            target.hp <= 0
+          ) {
+            rewardSrdEnemyDefeat(
+              p,
+              target,
+              'arma secund?ria'
+            );
+          }
+
+          break;
+        }
+
+        throw Error(
+          'A??o t?tica ainda n?o reconhecida: ' +
+          actionId
+        );
+      }
+
       case 'check': {
         const p = own();
         const ability = Number(a.ability);
@@ -590,7 +1794,10 @@ export async function POST(req: NextRequest) {
 
         s.turn = 0;
         s.actionUsed = false;
+        s.bonusActionUsed = false;
         s.movementUsed = 0;
+        s.movementBonusSquares = 0;
+        s.spellSlotUsedThisTurn = false;
         log(
           `⚔️ Combate iniciado! Iniciativa 5e: ` +
             s.order
@@ -691,7 +1898,10 @@ export async function POST(req: NextRequest) {
 
         s.turn = 0;
         s.actionUsed = false;
+        s.bonusActionUsed = false;
         s.movementUsed = 0;
+        s.movementBonusSquares = 0;
+        s.spellSlotUsedThisTurn = false;
         log(
           `⚔️ Batalha Tática Iniciada! Ordem de Iniciativa 5e: ` +
             s.order
@@ -827,6 +2037,36 @@ export async function POST(req: NextRequest) {
         const p = own();
         if (p.hp <= 0) throw Error('Este personagem está inconsciente.');
 
+        /* SRD_3B_C1_MAIN_ACTION_GATE */
+        if (
+          s.combat &&
+          s.order.includes(p.id) &&
+          s.order[s.turn] !== p.id
+        ) {
+          throw Error('Aguarde o seu turno para atacar.');
+        }
+
+        if (
+          s.combat &&
+          s.actionUsed
+        ) {
+          throw Error('Sua Acao ja foi utilizada neste turno.');
+        }
+
+        if (
+          s.combat &&
+          s.bonusActionUsed &&
+          hasSrdAdvancedCondition(
+            p,
+            'slow',
+            'lentidao'
+          )
+        ) {
+          throw Error(
+            'Slow permite Acao ou Acao Bonus, nao ambas.'
+          );
+        }
+
         // If player explicitly wants to start tactical battle on attack
         if (a.startTactical && !s.combat) {
           s.combat = true;
@@ -913,7 +2153,7 @@ export async function POST(req: NextRequest) {
             s.order.unshift(p.id);
             s.turn = 0;
           }
-          s.actionUsed = false;
+         s.actionUsed = false;
           log(`⚔️ ${p.name} iniciou o combate tático de grupo!`, 'roll');
         } else if (s.combat) {
           // If already in tactical combat, check if hero is in the order
@@ -971,15 +2211,85 @@ export async function POST(req: NextRequest) {
         }
 
         // Server authoritative SRD attack resolution
-        const dmgFormula = String(a.damageFormula || p.damage);
+        const equippedWeapon =
+          p.equipment?.mainHand
+            ? ITEMS_CATALOG[
+                p.equipment.mainHand
+              ]
+            : undefined;
+
+        const strengthAttack =
+          !equippedWeapon?.finesse ||
+          mod(p.stats[0]) >=
+            mod(p.stats[1]);
+
+        const rageBonus =
+          p.raging &&
+          strengthAttack &&
+          !rangeCheck.isRanged
+            ? getRageDamageBonus(
+                p.level
+              )
+            : 0;
+
+        const dmgFormula =
+          addFormulaBonus(
+            p.damage,
+            rageBonus
+          );
         const attackBonus = p.attack - 2 * (p.exhaustion || 0);
+        /* SRD_3B_C1_MAIN_BREAK_INVISIBILITY */
+        breakSrdInvisibilityForActor(
+          s,
+          p.id
+        );
+
         const res = resolveAttack(
           { name: p.name, attack: attackBonus, damage: dmgFormula, conditions: p.conditions },
           { id: target.id, name: target.name, ac: target.ac, hp: target.hp, conditions: target.conditions },
           a.mode
         );
+
         clientAttackResult = res;
-        target.hp = res.hpAfter;
+
+        // RAGE_EXTENSION_ON_ATTACK
+        if (p.raging) {
+          p.rageEndsAtRound =
+            (s.round || 1) +
+            1;
+        }
+
+        p.conditions =
+          (p.conditions || [])
+            .filter(
+              (condition) => {
+                const normalized =
+                  condition
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .toLowerCase();
+
+                return (
+                  !normalized.includes(
+                    'oculto'
+                  ) &&
+                  !normalized.includes(
+                    'invisivel'
+                  )
+                );
+              }
+            );
+
+        touchChar(p);
+        /* SRD_3B_C1_MAIN_TYPED_PIPELINE */
+        applySrdAdvancedAttackToEnemy(
+          s,
+          p,
+          target,
+          res,
+          equippedWeapon?.name ||
+            p.weapon
+        );
         touchChar(target);
         if (s.combat) {
           s.actionUsed = true;
@@ -1050,13 +2360,13 @@ export async function POST(req: NextRequest) {
           s.combat = false;
           s.combatPartyId = undefined;
           s.order = (s.order || []).filter((id) => !myEnemies.some((e) => e.id === id) && id !== p.id && (!p.partyId || !s.characters.some((c) => c.partyId === p.partyId && c.id === id)));
-          s.actionUsed = false;
+         s.actionUsed = false;
           log('⚔️ Todos os inimigos foram vencidos! Vitória do grupo!', 'gm');
         }
 
         // If client specified immediate end of turn, advance
         if (a.endTurn) {
-          s.actionUsed = false;
+         s.actionUsed = false;
           advance(s);
           executeEnemyAI(s);
         }
@@ -1064,38 +2374,92 @@ export async function POST(req: NextRequest) {
       }
       case 'spell': {
         const p = own();
-        if (p.hp <= 0) throw Error('Este personagem está inconsciente.');
 
-        if (a.startTactical && !s.combat) {
+        if (p.hp <= 0) {
+          throw Error(
+            'Este personagem est? inconsciente.'
+          );
+        }
+
+        if (p.raging) {
+          throw Error(
+            'Voc? n?o pode conjurar magias enquanto estiver em F?ria.'
+          );
+        }
+
+        /*
+         * Se a magia for usada para iniciar um combate t?tico,
+         * o servidor monta iniciativa antes da resolu??o.
+         */
+        if (
+          a.startTactical &&
+          !s.combat
+        ) {
           s.combat = true;
-          s.combatMode = 'tactical';
+          s.combatMode =
+            'tactical';
           s.round = 1;
-          const partyMembers = p.partyId
-            ? s.characters.filter((c) => c.partyId === p.partyId && c.hp > 0)
-            : [p];
-          s.combatPartyId = p.partyId || p.id;
-          for (const char of partyMembers) {
-            char.initiative = d20().raw + mod(char.stats[1]) + 3 - 2 * (char.exhaustion || 0);
-            touchChar(char);
-          }
-          const combatBiome =
-            (p.biome || s.biome || 'village') as string;
 
-          // Scope legacy enemies only to the party/hero that engages them.
-          for (const enemy of (s.enemies || [])) {
-            if (enemy.hp <= 0) continue;
+          const partyMembers =
+            p.partyId
+              ? s.characters.filter(
+                  (character) =>
+                    character.partyId ===
+                      p.partyId &&
+                    character.hp > 0
+                )
+              : [p];
+
+          s.combatPartyId =
+            p.partyId ||
+            p.id;
+
+          for (
+            const character of
+            partyMembers
+          ) {
+            character.initiative =
+              d20().raw +
+              mod(
+                character.stats[1]
+              ) -
+              2 *
+                (
+                  character.exhaustion ||
+                  0
+                );
+
+            touchChar(
+              character
+            );
+          }
+
+          const combatBiome =
+            String(
+              p.biome ||
+              s.biome ||
+              'forest'
+            );
+
+          for (
+            const enemy of
+            (s.enemies || [])
+          ) {
+            if (
+              enemy.hp <= 0
+            ) {
+              continue;
+            }
 
             const sameBiome =
               !enemy.biome ||
-              enemy.biome === combatBiome;
-
-            const isLegacyMalakor =
-              enemy.name.includes('Malakor');
+              enemy.biome ===
+                combatBiome;
 
             if (
               !enemy.partyId &&
               !enemy.ownerCharId &&
-              (sameBiome || isLegacyMalakor)
+              sameBiome
             ) {
               prepareEnemyForCombat(
                 enemy,
@@ -1107,30 +2471,61 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          const combatEnemies = (s.enemies || []).filter((enemy) => {
-            if (enemy.hp <= 0) return false;
+          const combatEnemies =
+            (s.enemies || [])
+              .filter(
+                (enemy) => {
+                  if (
+                    enemy.hp <= 0
+                  ) {
+                    return false;
+                  }
 
-            if (
-              enemy.biome &&
-              enemy.biome !== combatBiome
-            ) {
-              return false;
-            }
+                  if (
+                    enemy.biome &&
+                    enemy.biome !==
+                      combatBiome
+                  ) {
+                    return false;
+                  }
 
-            if (p.partyId) {
-              return enemy.partyId === p.partyId;
-            }
+                  if (p.partyId) {
+                    return (
+                      enemy.partyId ===
+                        p.partyId ||
+                      (
+                        !enemy.partyId &&
+                        !enemy.ownerCharId
+                      )
+                    );
+                  }
 
-            return enemy.ownerCharId === p.id;
-          });
+                  return (
+                    enemy.ownerCharId ===
+                      p.id ||
+                    (
+                      !enemy.partyId &&
+                      !enemy.ownerCharId
+                    )
+                  );
+                }
+              );
 
-          if (combatEnemies.length === 0) {
+          if (
+            combatEnemies.length ===
+            0
+          ) {
+            s.combat = false;
+
             throw Error(
-              'Nao ha criaturas hostis validas para este combate.'
+              'N?o h? criaturas hostis v?lidas neste mapa.'
             );
           }
 
-          for (const enemy of combatEnemies) {
+          for (
+            const enemy of
+            combatEnemies
+          ) {
             prepareEnemyForCombat(
               enemy,
               partyMembers,
@@ -1139,190 +2534,747 @@ export async function POST(req: NextRequest) {
               p.id
             );
 
-            enemy.initiative = d20().raw + 1;
+            enemy.initiative =
+              d20().raw + 1;
+
             touchChar(enemy);
           }
 
-          s.order = [...partyMembers, ...combatEnemies]
-            .sort((a, b) => (b.initiative || 0) - (a.initiative || 0) || a.id.localeCompare(b.id))
-            .map((x) => x.id);
-          s.turn = s.order.indexOf(p.id);
-          if (s.turn === -1) {
-            s.order.unshift(p.id);
+          s.order =
+            [
+              ...partyMembers,
+              ...combatEnemies
+            ]
+              .sort(
+                (left, right) =>
+                  (
+                    right.initiative ||
+                    0
+                  ) -
+                    (
+                      left.initiative ||
+                      0
+                    ) ||
+                  left.id.localeCompare(
+                    right.id
+                  )
+              )
+              .map(
+                (entity) =>
+                  entity.id
+              );
+
+          s.turn =
+            s.order.indexOf(
+              p.id
+            );
+
+          if (
+            s.turn < 0
+          ) {
+            s.order.unshift(
+              p.id
+            );
             s.turn = 0;
           }
-          s.actionUsed = false;
-          log(`✨ ${p.name} iniciou combate tático com magia!`, 'roll');
-        } else if (s.combat) {
-          if (!s.order.includes(p.id)) {
-            p.initiative = d20().raw + mod(p.stats[1]) - 2 * (p.exhaustion || 0);
-            touchChar(p);
-            let insertIdx = s.order.length;
-            for (let i = 0; i < s.order.length; i++) {
-              const actor = [...s.characters, ...s.enemies].find((x) => x.id === s.order[i]);
-              const init = actor ? (actor.initiative || 0) : 0;
-              if (p.initiative > init) {
-                insertIdx = i;
-                break;
-              }
-            }
-            s.order.splice(insertIdx, 0, p.id);
-            if (insertIdx <= s.turn) s.turn++;
-            log(`✨ ${p.name} conjurou magia e entrou na iniciativa da batalha! (Iniciativa: ${p.initiative})`, 'roll');
-          }
 
-          const isMyCombat = !isMmo || !s.combatPartyId || s.combatPartyId === (p.partyId || p.id);
-          if (isMyCombat) {
-            const curTurnId = s.order[s.turn];
-            if (curTurnId && curTurnId !== p.id) {
-              const activeCreature = [...s.characters, ...s.enemies].find((x) => x.id === curTurnId);
-              throw Error(`Não é o turno de ${p.name}. Turno atual: ${activeCreature ? activeCreature.name : 'Inimigo'}.`);
-            }
-            if (s.actionUsed) {
-              throw Error('Você já utilizou sua Ação neste turno. Mova-se pelo terreno ou clique em "Fim do Turno" para passar a vez.');
-            }
-          }
+         s.actionUsed = false;
+          s.bonusActionUsed =
+            false;
+          s.movementUsed = 0;
+          s.movementBonusSquares =
+            0;
+          s.spellSlotUsedThisTurn =
+            false;
+          s.reactionUsedBy =
+            s.reactionUsedBy ||
+            {};
         }
 
-        const spellLevel = Number(a.spellLevel || 0);
-        const spellName = String(a.spellName || 'Magia');
-
-        if (spellLevel > 0) {
-          const spent = spendSpellSlot(p, spellLevel);
-          if (!spent) {
-            throw Error(`Sem espaços de magia de nível ${spellLevel} restantes para ${p.name}!`);
-          }
-        }
-
-        const targetId = a.target || a.targetId;
-        if (targetId) {
-          let target = s.enemies.find((e) => e.id === targetId && e.hp > 0);
-          if (!target) {
-            const living = s.enemies.filter((e) => e.hp > 0);
-            if (living.length > 0) {
-              target = living.sort((a, b) => {
-                const distA = Math.hypot(p.x - a.x, p.y - a.y);
-                const distB = Math.hypot(p.x - b.x, p.y - b.y);
-                return distA - distB;
-              })[0];
-            }
-          }
-          if (!target) throw Error('Nenhum alvo inimigo ativo encontrado na área.');
-
-          // Server-Authoritative Spell Range Validation
-          const rangeCheck = validateSpellRange(p, target, spellName);
-          if (!rangeCheck.inRange) {
-            throw Error(`Alvo fora do alcance da magia (${rangeCheck.distance} quadrados / ${(rangeCheck.distance * 1.5).toFixed(1)}m). Alcance máximo: ${rangeCheck.maxRange} quadrados.`);
-          }
-          const dmgFormula = String(a.damageFormula || '1d10');
-          const spellAtkBonus = prof(p.level) + mod(p.stats[p.spellAbility || 3]) - 2 * (p.exhaustion || 0);
-          const res = resolveAttack(
-            { name: p.name, attack: spellAtkBonus, damage: dmgFormula, conditions: p.conditions },
-            { id: target.id, name: target.name, ac: target.ac, hp: target.hp, conditions: target.conditions },
-            a.mode
+        const requestedName =
+          String(
+            a.spellName ||
+            ''
           );
-          clientAttackResult = res;
-          target.hp = res.hpAfter;
-          touchChar(target);
+
+        const profile =
+          getSrdRuntimeSpellProfile(
+            requestedName
+          );
+
+        if (!profile) {
+          throw Error(
+            'Magia ausente do catalogo SRD: ' +
+            requestedName
+          );
+        }
+
+        const economy =
+          profile.economy;
+
+        /*
+         * Action and Bonus Action spells require the caster turn.
+         * Reaction spells are intentionally allowed outside it.
+         */
+        if (
+          s.combat &&
+          economy !==
+            'reaction'
+        ) {
+          const current =
+            s.order[
+              s.turn
+            ];
+
+          if (
+            current &&
+            current !==
+              p.id
+          ) {
+            const actor =
+              [
+                ...s.characters,
+                ...s.enemies
+              ].find(
+                (entity) =>
+                  entity.id ===
+                  current
+              );
+
+            throw Error(
+              'Nao e o turno de ' +
+              p.name +
+              '. Turno atual: ' +
+              (
+                actor?.name ||
+                'outra criatura'
+              ) +
+              '.'
+            );
+          }
+        }
+
+        s.reactionUsedBy =
+          s.reactionUsedBy ||
+          {};
+
+        if (
+          s.combat &&
+          economy ===
+            'action' &&
+          s.actionUsed
+        ) {
+          throw Error(
+            'Sua Acao ja foi utilizada neste turno.'
+          );
+        }
+
+        if (
+          s.combat &&
+          economy ===
+            'bonus' &&
+          s.bonusActionUsed
+        ) {
+          throw Error(
+            'Sua Acao Bonus ja foi utilizada neste turno.'
+          );
+        }
+
+        if (
+          s.combat &&
+          economy ===
+            'reaction' &&
+          s.reactionUsedBy[
+            p.id
+          ]
+        ) {
+          throw Error(
+            'Sua Reacao ja foi utilizada.'
+          );
+        }
+
+        /* SRD_3B_C1_SPELL_SLOW_GATE */
+        if (
+          economy === 'reaction' &&
+          !canUseSrdReaction(p)
+        ) {
+          throw Error('Slow impede Reacoes.');
+        }
+
+        if (
+          s.combat &&
+          hasSrdAdvancedCondition(
+            p,
+            'slow',
+            'lentidao'
+          ) &&
+          (
+            (
+              economy === 'action' &&
+              s.bonusActionUsed
+            ) ||
+            (
+              economy === 'bonus' &&
+              s.actionUsed
+            )
+          )
+        ) {
+          throw Error(
+            'Slow permite Acao ou Acao Bonus, nao ambas.'
+          );
+        }
+
+        const slotLevel =
+          profile.level === 0
+            ? 0
+            : Math.max(
+                profile.level,
+                Number(
+                  a.spellLevel ||
+                  profile.level
+                )
+              );
+
+        const isRitualCast = Boolean(a.isRitual || a.asRitual);
+        const isFreeHuntersMark =
+          requestedName === "Hunter's Mark" &&
+          p.className === 'Patrulheiro' &&
+          (p.freeHuntersMarkSpent || 0) < getRangerFreeHuntersMarkMaxUses(p.level || 1);
+        const isMysticArcanum =
+          p.className === 'Bruxo' &&
+          slotLevel >= 6 &&
+          slotLevel <= 9 &&
+          hasMysticArcanumAvailable(p, slotLevel);
+
+        if (
+          slotLevel > 0 &&
+          !isRitualCast &&
+          !isFreeHuntersMark &&
+          !isMysticArcanum
+        ) {
+          const index =
+            slotLevel - 1;
+
+          const total =
+            p.slots[index] ||
+            0;
+
+          const used =
+            p.usedSlots[index] ||
+            0;
+
+          if (
+            used >= total
+          ) {
+            throw Error(
+              'Sem espaco de magia de nivel ' +
+              slotLevel +
+              ' restante.'
+            );
+          }
+
+          /*
+           * SRD 5.2.1:
+           * only one spell slot may be expended on a turn.
+           */
+          if (
+            s.combat &&
+            s.spellSlotUsedThisTurn
+          ) {
+            throw Error(
+              'Voce ja gastou um espaco de magia neste turno.'
+            );
+          }
+        }
+
+        const biome =
+          String(
+            p.biome ||
+            s.biome ||
+            'forest'
+          );
+
+        const gridSize =
+          biome ===
+            'village'
+            ? 8
+            : 16;
+
+        const activeZones =
+          getActiveZonesForBiome(
+            biome
+          );
+
+        /* SRD_3B_C1_COUNTERSPELL_TRIGGER */
+        if (
+          !isCharacterSpellPrepared(
+            p,
+            requestedName,
+            { asRitual: isRitualCast }
+          )
+        ) {
+          throw Error(
+            p.name +
+              ' nao possui ' +
+              requestedName +
+              ' preparada.'
+          );
+        }
+
+        breakSrdInvisibilityForActor(
+          s,
+          p.id
+        );
+
+        const counterspell =
+          tryAutoCounterspellCharacterCast(
+            s,
+            p,
+            requestedName
+          );
+
+        if (counterspell.slotSpent) {
+          const counterspeller =
+            s.characters.find(
+              (character) =>
+                character.id ===
+                  counterspell.counterspellerId
+            );
+
+          if (counterspeller) {
+            touchChar(counterspeller);
+          }
+
+          log(
+            (
+              counterspell.counterspellerName ||
+              'Conjurador'
+            ) +
+              ' usa Counterspell: CON ' +
+              counterspell.saveTotal +
+              ' vs CD ' +
+              counterspell.dc +
+              (
+                counterspell.countered
+                  ? ' - magia anulada.'
+                  : ' - a magia resiste.'
+              ),
+            'roll'
+          );
+        }
+
+        if (counterspell.countered) {
           if (s.combat) {
-            s.actionUsed = true;
-          }
-          log(`✨ [${spellName}${spellLevel > 0 ? ' • Nível ' + spellLevel : ' • Truque'}] ${res.text}`, 'roll');
-
-          // Free Open World: retaliation
-          if (!s.combat && target.hp > 0) {
-            executeSingleEnemyRevenge(target, p, s);
-          }
-
-          if (target.hp <= 0) {
-            log(`💀 ${target.name} foi derrotado pela magia!`, 'gm');
-            const xpReward = getCreatureProfile(target.name).xpReward;
-            if (isMmo) {
-              const recipients = p.partyId
-                ? s.characters.filter((char) => char.partyId === p.partyId)
-                : [p];
-              for (const char of recipients) {
-                char.xp = (char.xp || 0) + xpReward;
-                touchChar(char);
-              }
-              log(`✨ ${p.partyId ? 'O grupo de ' + p.name : p.name + ' (Solo)'} recebeu +${xpReward} XP pela vitória contra ${target.name}!`, 'gm');
-            } else {
-              for (const char of s.characters) {
-                char.xp = (char.xp || 0) + xpReward;
-                touchChar(char);
-              }
-              log(`✨ Os heróis receberam +${xpReward} XP pela vitória contra ${target.name}!`, 'gm');
+            if (economy === 'action') {
+              s.actionUsed = true;
             }
-
-            // Spawn interactive lootable corpse
-            try {
-              const mobLoot = generateMobLoot(target.name, target.maxHp || 10, (s.act || 1) as any);
-              if (!s.corpses) s.corpses = [];
-              const corpseBiome = target.biome || p.biome || s.biome || 'forest';
-              const corpse: GroundCorpse = {
-                id: `corpse-${target.id}-${Date.now()}`,
-                name: `Restos de ${target.name}`,
-                enemyName: target.name,
-                x: target.x ?? 4,
-                y: target.y ?? 4,
-                gold: mobLoot.gold,
-                items: mobLoot.items.map((it) => it.id),
-                biome: corpseBiome,
-                slainBy: p.name,
-                createdAt: Date.now()
-              };
-              s.corpses.push(corpse);
-              log(`💀 ${target.name} tombou no chão [X:${corpse.x} Y:${corpse.y}]! Deixou ${corpse.gold} PO${mobLoot.items.length ? ' e ' + mobLoot.items.map((it) => it.name).join(', ') : ''}. Aproxime-se para saquear!`, 'gm');
-            } catch (err) {
-              console.error('[Corpse spawn error]:', err);
+            if (economy === 'bonus') {
+              s.bonusActionUsed = true;
+            }
+            if (economy === 'reaction') {
+              s.reactionUsedBy[p.id] = true;
             }
           }
 
-        const myEnemies = (s.enemies || []).filter((e) => {
-          if (p.partyId) return !e.partyId || e.partyId === p.partyId;
-          return !e.ownerCharId || e.ownerCharId === p.id;
-        });
-        if (myEnemies.length > 0 && myEnemies.every((e) => e.hp <= 0)) {
-          const curBiome = p.biome || s.biome || 'village';
-          const curLoc = p.location ?? s.location ?? 0;
-          if (curBiome === 'forest' || curLoc === 1) {
-            recordProgression(p, { forest_cleared: true });
-          } else if (curBiome === 'dungeon' || curLoc === 2) {
-            recordProgression(p, { malakor_defeated: true });
+          touchChar(p);
+          break;
+        }
+
+        const resolution =
+          resolveSrdSpellWithAdvancedDamage(
+            s,
+            p,
+            {
+              spellName:
+                requestedName,
+
+              spellLevel:
+                slotLevel,
+
+              targetId:
+                String(
+                  a.target ||
+                  a.targetId ||
+                  ''
+                ),
+
+              targetIds:
+                Array.isArray(a.targetIds)
+                  ? a.targetIds
+                      .map(String)
+                      .filter(Boolean)
+                  : undefined,
+
+              damageType:
+                a.damageType
+                  ? String(a.damageType)
+                  : undefined,
+
+              canOccupy:
+                (
+                  x,
+                  y
+                ) =>
+                  isGridTileWalkable(
+                    biome as any,
+                    x,
+                    y,
+                    gridSize,
+                    activeZones
+                  ),
+
+              asRitual:
+                isRitualCast,
+
+              targetX:
+                Number.isFinite(
+                  Number(
+                    a.targetX
+                  )
+                )
+                  ? Number(
+                      a.targetX
+                    )
+                  : undefined,
+
+              targetY:
+                Number.isFinite(
+                  Number(
+                    a.targetY
+                  )
+                )
+                  ? Number(
+                      a.targetY
+                    )
+                  : undefined
+            }
+          );
+
+        /*
+         * So gasta o slot depois de toda validacao de alvo,
+         * alcance e geometria ser concluida com sucesso.
+         */
+        if (isFreeHuntersMark) {
+          p.freeHuntersMarkSpent =
+            (p.freeHuntersMarkSpent || 0) + 1;
+          log(
+            p.name +
+              ' usa Hunter\'s Mark gratuitamente via Inimigo Favorito (' +
+              p.freeHuntersMarkSpent +
+              '/' +
+              getRangerFreeHuntersMarkMaxUses(p.level || 1) +
+              ').',
+            'roll'
+          );
+        } else if (isMysticArcanum) {
+          p.mysticArcanumSpent = [
+            ...(p.mysticArcanumSpent || []),
+            slotLevel
+          ];
+          log(
+            p.name +
+              ' conjura ' +
+              requestedName +
+              ' via Arcano Mistico (nivel ' +
+              slotLevel +
+              ').',
+            'roll'
+          );
+        } else if (isRitualCast) {
+          log(
+            p.name +
+              ' conjura ' +
+              requestedName +
+              ' como Ritual (sem gastar espaco de magia).',
+            'roll'
+          );
+        } else if (
+          slotLevel > 0
+        ) {
+          p.usedSlots[
+            slotLevel - 1
+          ] =
+            (
+              p.usedSlots[
+                slotLevel - 1
+              ] ||
+              0
+            ) +
+            1;
+
+          if (s.combat) {
+            s.spellSlotUsedThisTurn =
+              true;
           }
+        }
+
+        clientAttackResult =
+          resolution.attackResult;
+
+        clientHealResult =
+          resolution.healResult;
+
+        for (
+          const id of
+          resolution.changedCharacterIds
+        ) {
+          const changed =
+            s.characters.find(
+              (character) =>
+                character.id ===
+                id
+            );
+
+          if (changed) {
+            touchChar(
+              changed
+            );
+          }
+        }
+
+        if (
+          resolution.requiresAdjudication
+        ) {
+          log(
+            'SRD: ' +
+              resolution.spellName +
+              ' possui um efeito aberto registrado para adjudicacao da Mestra IA.',
+            'gm'
+          );
+        }
+
+        for (
+          const id of
+          resolution.affectedEnemyIds
+        ) {
+          const enemy =
+            s.enemies.find(
+              (candidate) =>
+                candidate.id ===
+                id
+            );
+
+          if (enemy) {
+            touchChar(enemy);
+          }
+        }
+
+        if (
+          resolution.healResult
+        ) {
+          const target =
+            s.characters.find(
+              (character) =>
+                character.id ===
+                resolution
+                  .healResult
+                  ?.targetId
+            );
+
+          if (target) {
+            touchChar(target);
+          }
+        }
+
+        s.reactionUsedBy =
+          s.reactionUsedBy ||
+          {};
+
+        for (
+          const id of
+          resolution.reactionLockedIds
+        ) {
+          /*
+           * Toque Chocante impede Ataques de Oportunidade
+           * at? o in?cio do pr?ximo turno do alvo.
+           */
+          s.reactionUsedBy[id] =
+            true;
+        }
+
+        for (
+          const text of
+          resolution.logs
+        ) {
+          log(
+            '? ' + text,
+            'roll'
+          );
+        }
+
+        for (
+          const enemyId of
+          resolution.defeatedEnemyIds
+        ) {
+          const defeated =
+            s.enemies.find(
+              (enemy) =>
+                enemy.id ===
+                enemyId
+            );
+
+          if (defeated) {
+            log(
+              '?? ' +
+                defeated.name +
+                ' foi derrotado por ' +
+                resolution.spellName +
+                '.',
+              'gm'
+            );
+
+            rewardSrdEnemyDefeat(
+              p,
+              defeated,
+              resolution.spellName
+            );
+          }
+        }
+
+        /*
+         * Conjurar encerra Oculto/Invis?vel proveniente
+         * da a??o Hide do motor t?tico.
+         */
+        p.conditions =
+          (p.conditions || [])
+            .filter(
+              (condition) => {
+                const normalized =
+                  condition
+                    .normalize('NFD')
+                    .replace(
+                      /[\u0300-\u036f]/g,
+                      ''
+                    )
+                    .toLowerCase();
+
+                return (
+                  !normalized.includes(
+                    'oculto'
+                  ) &&
+                  !normalized.includes(
+                    'invisivel (oculto)'
+                  )
+                );
+              }
+            );
+
+        touchChar(p);
+
+        if (
+          s.combat
+        ) {
+          if (
+            economy ===
+              'action'
+          ) {
+            s.actionUsed =
+              true;
+          }
+
+          if (
+            economy ===
+              'bonus'
+          ) {
+            s.bonusActionUsed =
+              true;
+          }
+
+          if (
+            economy ===
+              'reaction'
+          ) {
+            s.reactionUsedBy =
+              s.reactionUsedBy ||
+              {};
+
+            s.reactionUsedBy[
+              p.id
+            ] =
+              true;
+          }
+        }
+
+        const scopedLiving =
+          (s.enemies || [])
+            .filter(
+              (enemy) => {
+                if (
+                  enemy.hp <= 0
+                ) {
+                  return false;
+                }
+
+                if (
+                  p.partyId
+                ) {
+                  return (
+                    enemy.partyId ===
+                    p.partyId
+                  );
+                }
+
+                return (
+                  enemy.ownerCharId ===
+                    p.id
+                );
+              }
+            );
+
+        if (
+          s.combat &&
+          scopedLiving.length ===
+            0
+        ) {
           s.combat = false;
-          s.combatPartyId = undefined;
-          s.order = (s.order || []).filter((id) => !myEnemies.some((e) => e.id === id) && id !== p.id && (!p.partyId || !s.characters.some((c) => c.partyId === p.partyId && c.id === id)));
-          s.actionUsed = false;
-          log('⚔️ Todos os inimigos foram vencidos! Vitória do grupo!', 'gm');
-        }
-        } else if (a.healFormula) {
-          const targetChar = s.characters.find((c) => c.id === (a.targetId || p.id));
-          if (!targetChar) throw Error('Alvo invÃ¡lido para cura.');
-          const healRoll = roll(a.healFormula);
-          const oldHp = targetChar.hp;
-          targetChar.hp = Math.min(targetChar.maxHp, targetChar.hp + healRoll.total);
-          touchChar(targetChar);
-          const healed = targetChar.hp - oldHp;
-          clientHealResult = {
-            targetId: targetChar.id,
-            targetName: targetChar.name,
-            healAmount: healed,
-            hpAfter: targetChar.hp,
-            maxHp: targetChar.maxHp
-          };
-          s.actionUsed = true;
-          log(`âœ¨ ${p.name} conjurou ${spellName} em ${targetChar.name}: [${healRoll.results.join(', ')}] + ${healRoll.bonus} = recuperou ${healed} PV! (${targetChar.hp}/${targetChar.maxHp} PV)`, 'roll');
-        } else {
-          s.actionUsed = true;
-          log(`âœ¨ ${p.name} conjurou ${spellName}${spellLevel > 0 ? ' (EspaÃ§o de nÃ­vel ' + spellLevel + ' gasto)' : ''}.`, 'roll');
+          s.combatPartyId =
+            undefined;
+          s.order = [];
+          s.turn = 0;
+         s.actionUsed = false;
+          s.bonusActionUsed =
+            false;
+          s.movementUsed = 0;
+          s.movementBonusSquares =
+            0;
+
+          log(
+            '?? Todos os inimigos deste combate foram derrotados.',
+            'gm'
+          );
         }
 
-        if (a.endTurn && s.combat) {
-          s.actionUsed = false;
+        if (
+          !s.combat &&
+          resolution.attackResult
+        ) {
+          const target =
+            s.enemies.find(
+              (enemy) =>
+                enemy.id ===
+                resolution
+                  .attackResult
+                  ?.targetId &&
+                enemy.hp > 0
+            );
+
+          if (target) {
+            executeSingleEnemyRevenge(
+              target,
+              p,
+              s
+            );
+          }
+        }
+
+        if (
+          a.endTurn &&
+          s.combat
+        ) {
           advance(s);
           executeEnemyAI(s);
         }
+
         break;
       }
       case 'useItem': {
@@ -1405,9 +3357,9 @@ export async function POST(req: NextRequest) {
             );
           }
 
-          if (s.actionUsed) {
+          if (s.bonusActionUsed) {
             throw Error(
-              'Voce ja utilizou sua Acao neste turno.'
+              'Voc? j? utilizou sua A??o B?nus neste turno.'
             );
           }
         }
@@ -1447,7 +3399,7 @@ export async function POST(req: NextRequest) {
         touchChar(p);
 
         if (s.combat && isMyCombat) {
-          s.actionUsed = true;
+          s.bonusActionUsed = true;
         }
 
         const remaining =
@@ -1484,7 +3436,7 @@ export async function POST(req: NextRequest) {
           s.combat &&
           isMyCombat
         ) {
-          s.actionUsed = false;
+         s.actionUsed = false;
           advance(s);
           executeEnemyAI(s);
         }
@@ -1553,7 +3505,7 @@ export async function POST(req: NextRequest) {
           }
         }
         log(`Turno de ${activeChar?.name || p.name || 'criatura'} concluído.`);
-        s.actionUsed = false;
+       s.actionUsed = false;
         advance(s);
         executeEnemyAI(s);
         break;
@@ -1562,7 +3514,7 @@ export async function POST(req: NextRequest) {
         gm();
         s.combat = false;
         s.order = [];
-        s.actionUsed = false;
+       s.actionUsed = false;
         log('O anfitriÃ£o encerrou o combate.');
         break;
       }
@@ -1585,6 +3537,169 @@ export async function POST(req: NextRequest) {
           throw Error('Destino intransponÃ­vel ou bloqueado por obstÃ¡culo.');
         }
 
+        // SRD_OPPORTUNITY_ATTACK
+        if (
+          s.combat &&
+          s.disengagedActorId !==
+            p.id
+        ) {
+          s.reactionUsedBy =
+            s.reactionUsedBy ||
+            {};
+
+          const provocations =
+            (s.enemies || [])
+              .filter(
+                (enemy) => {
+                  if (
+                    enemy.hp <= 0
+                  ) {
+                    return false;
+                  }
+
+                  /* SRD_3B_C1_ENEMY_REACTION_GATE */
+                  if (!canUseSrdReaction(enemy)) {
+                    return false;
+                  }
+
+                  if (
+                    !(s.order || [])
+                      .includes(
+                        enemy.id
+                      )
+                  ) {
+                    return false;
+                  }
+
+                  if (
+                    s.reactionUsedBy[
+                      enemy.id
+                    ]
+                  ) {
+                    return false;
+                  }
+
+                  const oldDistance =
+                    getGridDistance(
+                      p,
+                      enemy
+                    );
+
+                  const newDistance =
+                    getGridDistance(
+                      {
+                        x,
+                        y
+                      },
+                      enemy
+                    );
+
+                  return (
+                    oldDistance <= 1 &&
+                    newDistance > 1
+                  );
+                }
+              );
+
+          for (
+            const enemy of
+            provocations
+          ) {
+            const profile =
+              getCreatureProfile(
+                enemy.name
+              );
+
+            const result =
+              resolveAttack(
+                {
+                  name:
+                    enemy.name +
+                    ' ? Ataque de Oportunidade',
+
+                  attack:
+                    enemy.attack,
+
+                  damage:
+                    enemy.damage,
+
+                  conditions:
+                    enemy.conditions ||
+                    [],
+
+                  weapon:
+                    enemy.weapon ||
+                    profile.attackName
+                },
+                {
+                  id:
+                    p.id,
+                  name:
+                    p.name,
+                  ac:
+                    p.ac,
+                  hp:
+                    p.hp,
+                  conditions:
+                    p.conditions
+                },
+                'normal',
+                false
+              );
+
+            applyAutoShieldReaction(
+              s,
+              p,
+              result
+            );
+
+            /* SRD_3B_B3_MOVE_DAMAGE */
+            applyAuthoritativeCharacterDamage(
+              s,
+              p,
+              result.damage,
+              enemy.weapon ||
+                profile.attackName
+            );
+
+            result.hpAfter =
+              p.hp;
+
+            s.reactionUsedBy[
+              enemy.id
+            ] =
+              true;
+
+            touchChar(p);
+
+            log(
+              '?? Rea??o: ' +
+                result.text,
+              'roll'
+            );
+
+            if (
+              p.hp <= 0
+            ) {
+              log(
+                p.name +
+                  ' caiu antes de conseguir deixar o alcance de ' +
+                  enemy.name +
+                  '.',
+                'gm'
+              );
+
+              break;
+            }
+          }
+
+          if (
+            p.hp <= 0
+          ) {
+            break;
+          }
+        }
+
         p.x = x;
         p.y = y;
         touchChar(p);
@@ -1594,32 +3709,233 @@ export async function POST(req: NextRequest) {
         break;
       }
       case 'shortRest': {
-        if (s.combat) throw Error('NÃ£o Ã© possÃ­vel descansar em combate.');
-        let logMsg = 'Descanso Curto (1h): ';
-        for (const p of s.characters) {
-          if (p.hp > 0 && p.hp < p.maxHp) {
-            const res = shortRestHeal(p);
-            touchChar(p);
-            logMsg += `${p.name} ${res.rollText}. `;
+        if (s.combat) {
+          throw Error(
+            'Nao e possivel descansar em combate.'
+          );
+        }
+
+        let logMsg =
+          'Descanso Curto (1h): ';
+
+        for (
+          const p of
+          s.characters
+        ) {
+          if (
+            p.hp > 0 &&
+            p.hp <
+              p.maxHp
+          ) {
+            const result =
+              shortRestHeal(p);
+
+            logMsg +=
+              p.name +
+              ' ' +
+              result.rollText +
+              '. ';
           }
-        }
-        if (!logMsg.includes('recuperou')) {
-          logMsg += 'Todos os herÃ³is jÃ¡ estavam com vida mÃ¡xima.';
-        }
-        log(logMsg, 'roll');
-        break;
-      }
-      case 'rest': {
-        gm();
-        if (s.combat) throw Error('NÃ£o Ã© possÃ­vel descansar em combate.');
-        for (const p of s.characters) {
-          p.deathSuccess = 0;
-          p.exhaustion = Math.max(0, p.exhaustion - 1);
+
+          if (
+            (
+              p.secondWindSpent ||
+              0
+            ) > 0
+          ) {
+            p.secondWindSpent =
+              Math.max(
+                0,
+                (
+                  p.secondWindSpent ||
+                  0
+                ) -
+                  1
+              );
+          }
+
+          if (
+            (
+              p.rageSpent ||
+              0
+            ) > 0
+          ) {
+            p.rageSpent =
+              Math.max(
+                0,
+                (
+                  p.rageSpent ||
+                  0
+                ) -
+                  1
+              );
+          }
+
+          /* SRD: Bruxo recupera espacos de magia em Descanso Curto (Pact Magic) */
+          if (p.className === 'Bruxo') {
+            p.usedSlots = p.slots.map(() => 0);
+            logMsg += p.name + ' recuperou todos os espacos de magia de pacto. ';
+          }
+
+          /* SRD: Mago Recuperacao Arcana (Arcane Recovery) 1x por Descanso Longo */
+          if (p.className === 'Mago' && !p.arcaneRecoverySpent) {
+            const limit = getWizardArcaneRecoveryLimit(p.level || 1);
+            let budget = limit;
+            let recovered = 0;
+            for (let lvl = 1; lvl <= 5; lvl++) {
+              while ((p.usedSlots[lvl - 1] || 0) > 0 && budget >= lvl) {
+                p.usedSlots[lvl - 1] = Math.max(0, (p.usedSlots[lvl - 1] || 0) - 1);
+                budget -= lvl;
+                recovered += lvl;
+              }
+            }
+            if (recovered > 0) {
+              p.arcaneRecoverySpent = true;
+              logMsg += p.name + ' usou Recuperacao Arcana (' + recovered + ' niveis de espacos recuperados). ';
+            }
+          }
+
           touchChar(p);
         }
-        log('O grupo concluiu um descanso longo (8h). PV e espaços de magia restaurados.', 'roll');
+
+        log(
+          logMsg +
+            'Recursos de Descanso Curto foram atualizados.',
+          'roll'
+        );
+
         break;
       }
+
+      case 'rest': {
+        gm();
+
+        if (s.combat) {
+          throw Error(
+            'Nao e possivel descansar em combate.'
+          );
+        }
+
+        for (
+          const p of
+          s.characters
+        ) {
+          if (
+            p.hp <= 0
+          ) {
+            continue;
+          }
+
+          p.hp =
+            p.maxHp;
+
+          p.temporaryHp = 0;
+
+          p.usedSlots =
+            p.slots.map(
+              () => 0
+            );
+
+          p.hitDiceSpent =
+            0;
+
+          p.deathSuccess =
+            0;
+
+          p.deathFail =
+            0;
+
+          p.exhaustion =
+            Math.max(
+              0,
+              p.exhaustion -
+                1
+            );
+
+          p.secondWindSpent =
+            0;
+
+          p.rageSpent =
+            0;
+
+          p.raging =
+            false;
+
+          p.rageEndsAtRound =
+            undefined;
+
+          /* SRD B6: Reset Mystic Arcanum, Favored Enemy, Arcane Recovery */
+          p.mysticArcanumSpent = [];
+          p.freeHuntersMarkSpent = 0;
+          p.arcaneRecoverySpent = false;
+
+          /* Repreparacao opcional enviada junto com o rest */
+          const toReprepare = Array.isArray(a.repreparedSpells)
+            ? a.repreparedSpells
+            : Array.isArray(a.preparedSpells)
+              ? a.preparedSpells
+              : undefined;
+
+          if (toReprepare) {
+            const prepResult = reprepareCharacterSpells(p, toReprepare);
+            if (!prepResult.ok) {
+              throw Error(prepResult.reason || 'Falha ao repreparar magias.');
+            }
+          }
+
+          p.conditions =
+            (p.conditions || [])
+              .filter(
+                (condition) => {
+                  const value =
+                    condition
+                      .normalize('NFD')
+                      .replace(
+                        /[\u0300-\u036f]/g,
+                        ''
+                      )
+                      .toLowerCase();
+
+                  return (
+                    !value.includes(
+                      'em furia'
+                    ) &&
+                    !value.includes(
+                      'esquivando'
+                    ) &&
+                    !value.includes(
+                      'escudo arcano'
+                    )
+                  );
+                }
+              );
+
+          touchChar(p);
+        }
+
+        log(
+          'Descanso Longo concluido: PV, Dados de Vida, espacos de magia, Arcano Mistico e recursos foram restaurados.',
+          'roll'
+        );
+
+        break;
+      }
+
+      case 'reprepareSpells': {
+        const p = own();
+        if (s.combat) throw Error('Nao e possivel repreparar magias durante o combate.');
+        const spells = Array.isArray(a.preparedSpells)
+          ? a.preparedSpells
+          : Array.isArray(a.repreparedSpells)
+            ? a.repreparedSpells
+            : [];
+        const res = reprepareCharacterSpells(p, spells);
+        if (!res.ok) throw Error(res.reason || 'Falha ao repreparar magias.');
+        touchChar(p);
+        log(p.name + ' repreparou suas magias: ' + (p.preparedSpells || []).join(', ') + '.', 'spell');
+        break;
+      }
+
       case 'location': {
         const p = own();
         if (s.combat && (s.order || []).includes(p.id)) throw Error('Encerre o seu combate antes de viajar.');
@@ -1830,7 +4146,10 @@ export async function POST(req: NextRequest) {
           s.turn = 0;
         }
         s.actionUsed = false;
+        s.bonusActionUsed = false;
         s.movementUsed = 0;
+        s.movementBonusSquares = 0;
+        s.spellSlotUsedThisTurn = false;
 
         if (locations[n].biome === 'dungeon' || n === 2) {
           recordProgression(p, { dungeon_entered: true });
@@ -1844,108 +4163,447 @@ export async function POST(req: NextRequest) {
         break;
       }
       case 'advanceAct': {
-        const nextAct = Number(a.act) as 1 | 2 | 3;
-        if (![1, 2, 3].includes(nextAct)) throw Error('Ato invÃ¡lido.');
+        const p = own();
 
-        // â”€â”€ Full tactical state reset â”€â”€
-        s.location = nextAct - 1;
-        s.biome = locations[s.location].biome;
-        s.act = nextAct;
-        s.combat = false;
-        s.order = [];
-        s.actionUsed = false;
-        s.bonusActionUsed = false;
-        s.movementUsed = 0;
-        s.round = 0;
-        s.turn = 0;
+        reconcileLegacyProgression(
+          s,
+          p
+        );
 
-        if (!s.questProgress) s.questProgress = {};
-        if (nextAct >= 2) {
-          s.questProgress.dungeon_entered = true;
+        const next =
+          getNextCampaignDestination(
+            s,
+            p
+          );
+
+        if (
+          next.completed ||
+          next.location === null
+        ) {
+          log(
+            '?? ' +
+              next.reason,
+            'gm'
+          );
+
+          break;
         }
 
-        // Reposition heroes to safe entrance coordinates
-        for (let i = 0; i < s.characters.length; i++) {
-          s.characters[i].x = 4 + (i % 2);
-          s.characters[i].y = 6 + Math.floor(i / 2);
+        /*
+         * Village objectives must be played.
+         * Continue never auto-completes NPC dialogue.
+         */
+        if (
+          next.location === 0
+        ) {
+          throw Error(
+            next.reason
+          );
         }
 
-        // Spawn act-appropriate enemies (exploration first â€” no auto-combat)
-        if (nextAct === 2) {
-          s.enemies = [
+        if (
+          !locations[
+            next.location
+          ]
+        ) {
+          throw Error(
+            'Destino da campanha inv?lido.'
+          );
+        }
+
+        /*
+         * Same travel validation used by the campaign proof engine.
+         */
+        const permission =
+          getTravelPermission(
+            s,
+            p,
+            next.location
+          );
+
+        if (
+          !permission.allowed
+        ) {
+          throw Error(
+            permission.reason ||
+            'Esta regi?o ainda n?o foi desbloqueada.'
+          );
+        }
+
+        const targetLocation =
+          next.location;
+
+        const targetBiome =
+          locations[
+            targetLocation
+          ].biome;
+
+        const partyMembers =
+          p.partyId
+            ? s.characters.filter(
+                (member) =>
+                  member.partyId ===
+                  p.partyId
+              )
+            : [p];
+
+        /*
+         * Remove enemies belonging to the hero/party
+         * from the previous region before moving.
+         */
+        const oldEnemyIds =
+          new Set(
+            (s.enemies || [])
+              .filter(
+                (enemy) =>
+                  p.partyId
+                    ? enemy.partyId ===
+                      p.partyId
+                    : enemy.ownerCharId ===
+                      p.id
+              )
+              .map(
+                (enemy) =>
+                  enemy.id
+              )
+          );
+
+        s.enemies =
+          (s.enemies || [])
+            .filter(
+              (enemy) =>
+                !oldEnemyIds.has(
+                  enemy.id
+                )
+            );
+
+        const spawnCoords:
+          Record<
+            string,
             {
-              id: crypto.randomUUID(),
-              name: 'GuardiÃ£o Espectral',
-              hp: 18,
-              maxHp: 18,
-              ac: 13,
-              attack: 3,
-              damage: '1d6+2',
-              initiative: 0,
-              x: 5,
-              y: 2
-            },
-            {
-              id: crypto.randomUUID(),
-              name: 'Escriba Sombrio',
-              hp: 11,
-              maxHp: 11,
-              ac: 11,
-              attack: 2,
-              damage: '1d6',
-              initiative: 0,
-              x: 6,
-              y: 4
+              x: number;
+              y: number;
             }
-          ];
-          log('O grupo desce Ã s Catacumbas das TrÃªs InscriÃ§Ãµes (Ato II). O ar cheira a poeira e ozÃ´nio arcano. âš ï¸ Criaturas hostis espreitam.', 'gm');
-        } else if (nextAct === 3) {
-          s.enemies = [
-            {
-              id: crypto.randomUUID(),
-              name: 'Malakor, o Lorde das Cinzas',
-              hp: 30,
-              maxHp: 30,
-              ac: 15,
-              attack: 5,
-              damage: '1d10+3',
-              initiative: 0,
+          > = {
+            village: {
               x: 4,
-              y: 1
+              y: 5
             },
-            {
-              id: crypto.randomUUID(),
-              name: 'Sentinela Abissal',
-              hp: 12,
-              maxHp: 12,
-              ac: 12,
-              attack: 3,
-              damage: '1d6+1',
-              initiative: 0,
-              x: 2,
+
+            forest: {
+              x: 3,
               y: 3
+            },
+
+            ruins: {
+              x: 3,
+              y: 6
+            },
+
+            dungeon: {
+              x: 4,
+              y: 6
+            },
+
+            canyon: {
+              x: 3,
+              y: 6
+            },
+
+            lair: {
+              x: 3,
+              y: 6
             }
-          ];
-          log('O grupo alcanÃ§a o SantuÃ¡rio do Vazio (Ato III). Malakor ergue-se do trono de pedra negra! âš ï¸ O confronto final se aproxima.', 'gm');
-        } else {
-          s.enemies = [
-            {
-              id: crypto.randomUUID(),
-              name: 'Sentinela de Cinzas',
-              hp: 9,
-              maxHp: 9,
-              ac: 11,
-              attack: 2,
-              damage: '1d4+1',
-              initiative: 0,
-              x: 5,
-              y: 2
-            }
-          ];
-          log('O grupo retorna ao claustro da superfÃ­cie (Ato I).', 'gm');
+          };
+
+        const spawn =
+          spawnCoords[
+            targetBiome
+          ] ||
+          {
+            x: 4,
+            y: 5
+          };
+
+        for (
+          let index = 0;
+          index <
+          partyMembers.length;
+          index++
+        ) {
+          const member =
+            partyMembers[
+              index
+            ];
+
+          member.location =
+            targetLocation;
+
+          member.biome =
+            targetBiome;
+
+          member.act =
+            (
+              targetLocation >= 4
+                ? 3
+                : targetLocation >= 2
+                  ? 2
+                  : 1
+            );
+
+          member.x =
+            spawn.x +
+            (
+              index %
+              2
+            );
+
+          member.y =
+            spawn.y +
+            Math.floor(
+              index /
+              2
+            );
+
+          touchChar(
+            member
+          );
         }
+
+        /*
+         * Keep legacy global state coherent in private rooms.
+         */
+        s.location =
+          targetLocation;
+
+        s.biome =
+          targetBiome;
+
+        s.act =
+          (
+            targetLocation >= 4
+              ? 3
+              : targetLocation >= 2
+                ? 2
+                : 1
+          );
+
+        const removalIds =
+          new Set([
+            ...partyMembers.map(
+              (member) =>
+                member.id
+            ),
+            ...oldEnemyIds
+          ]);
+
+        s.order =
+          (s.order || [])
+            .filter(
+              (id) =>
+                !removalIds.has(
+                  id
+                )
+            );
+
+        if (
+          s.combatPartyId ===
+          (
+            p.partyId ||
+            p.id
+          )
+        ) {
+          s.combat =
+            false;
+
+          s.combatPartyId =
+            undefined;
+
+          s.turn =
+            0;
+
+          s.round =
+            0;
+        }
+
+        s.actionUsed =
+          false;
+
+        s.bonusActionUsed =
+          false;
+
+        s.movementUsed =
+          0;
+
+        s.movementBonusSquares =
+          0;
+
+        s.spellSlotUsedThisTurn =
+          false;
+
+        /*
+         * Entering a region records VISIT only.
+         * It never records completion.
+         */
+        if (
+          targetLocation === 1
+        ) {
+          recordProgression(
+            p,
+            {
+              forest_entered:
+                true
+            }
+          );
+        }
+
+        if (
+          targetLocation === 2
+        ) {
+          recordProgression(
+            p,
+            {
+              ruins_entered:
+                true
+            }
+          );
+        }
+
+        if (
+          targetLocation === 3
+        ) {
+          recordProgression(
+            p,
+            {
+              dungeon_entered:
+                true
+            }
+          );
+        }
+
+        if (
+          targetLocation === 4
+        ) {
+          recordProgression(
+            p,
+            {
+              canyon_entered:
+                true
+            }
+          );
+        }
+
+        if (
+          targetLocation === 5
+        ) {
+          recordProgression(
+            p,
+            {
+              lair_entered:
+                true
+            }
+          );
+        }
+
+        /*
+         * Build the canonical encounter for the unfinished chapter.
+         */
+        const spawned =
+          buildCampaignEncounterForHero(
+            s,
+            p,
+            targetLocation
+          );
+
+        if (
+          spawned.length >
+          0
+        ) {
+          s.enemies.push(
+            ...spawned
+          );
+
+          for (
+            const enemy of
+            spawned
+          ) {
+            touchChar(
+              enemy
+            );
+          }
+        }
+
+        log(
+          '?? Campanha: ' +
+            next.reason,
+          'gm'
+        );
+
+        log(
+          p.name +
+            ' avan?ou para ' +
+            locations[
+              targetLocation
+            ].name +
+            '. ' +
+            locations[
+              targetLocation
+            ].text,
+          'gm'
+        );
+
+        if (
+          spawned.length >
+          0
+        ) {
+          log(
+            '?? O objetivo da campanha est? ativo nesta regi?o. A miss?o s? ser? marcada como conclu?da depois da vit?ria real.',
+            'gm'
+          );
+        }
+
         break;
       }
+
+      case 'startAdventure': {
+        const p = own();
+
+        reconcileLegacyProgression(
+          s,
+          p
+        );
+
+        const adventureId =
+          String(
+            a.adventureId ||
+            ''
+          );
+
+        const result =
+          p.activeMicroAdventureId ===
+            adventureId
+            ? continueAdventureForHero(
+                s,
+                p,
+                adventureId
+              )
+            : startAdventureForHero(
+                s,
+                p,
+                adventureId
+              );
+
+        if (!result.success) {
+          throw Error(
+            result.log
+          );
+        }
+
+        touchChar(p);
+
+        break;
+      }
+
       case 'notes':
         gm();
         s.notes = String(a.notes).slice(0, 10000);
@@ -1970,6 +4628,18 @@ export async function POST(req: NextRequest) {
         if (stepKey) {
           recordProgression(p, { [stepKey]: true });
         }
+        if (
+          stepKey === 'doran_talked' ||
+          stepKey === 'elenor_talked' ||
+          stepKey === 'kaelen_talked'
+        ) {
+          markCampaignProof(
+            s,
+            p,
+            stepKey
+          );
+        }
+
         if (a.logText) {
           log(String(a.logText), 'system');
         }
@@ -2006,6 +4676,13 @@ export async function POST(req: NextRequest) {
 
         // AtualizaÃ§Ã£o de espaÃ§os de magia para conjuradores
         p.slots = getSpellSlotsForClass(p.className, newLevel);
+
+        applyLevelUpSpellChoices(
+          p,
+          oldLevel,
+          newLevel,
+          a.spellChoices
+        );
         if (!p.usedSlots) p.usedSlots = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 
         // ASI: Aumento no Valor de Atributo (distribuiÃ§Ã£o de 2 pontos nos nÃ­veis 4, 8, etc.)
@@ -2080,7 +4757,10 @@ export async function POST(req: NextRequest) {
           s.turn = 0;
           s.round = 0;
           s.actionUsed = false;
+          s.bonusActionUsed = false;
           s.movementUsed = 0;
+          s.movementBonusSquares = 0;
+          s.spellSlotUsedThisTurn = false;
           s.location = 0;
           s.biome = 'village';
           s.enemies = [];
@@ -2148,7 +4828,10 @@ export async function POST(req: NextRequest) {
             s.turn = 0;
             s.round = 0;
             s.actionUsed = false;
+            s.bonusActionUsed = false;
             s.movementUsed = 0;
+            s.movementBonusSquares = 0;
+            s.spellSlotUsedThisTurn = false;
           }
         }
 
@@ -2847,6 +5530,7 @@ export async function POST(req: NextRequest) {
           const freshState: State = JSON.parse(fresh.state);
           const rawChar = (a.value || a.character) as Character;
           let nextChar = validateCharacter(rawChar);
+          validateCharacterSpellLoadout(nextChar);
           nextChar = calculateEquippedStats(nextChar);
           const existingIdx = freshState.characters.findIndex((x) => x.id === nextChar.id);
           if (existingIdx >= 0) {
@@ -2940,54 +5624,476 @@ export async function POST(req: NextRequest) {
 }
 
 function advance(s: State) {
-  const orderEnemies = (s.enemies || []).filter((x) => (s.order || []).includes(x.id));
-  const orderChars = (s.characters || []).filter((x) => (s.order || []).includes(x.id));
-  if (orderEnemies.length > 0 && orderEnemies.every((x) => x.hp <= 0)) {
-    s.combat = false;
-    s.combatPartyId = undefined;
-    s.order = [];
-    s.actionUsed = false;
-    s.movementUsed = 0;
-    s.logs.push(entry('Vitória! Todos os inimigos do combate foram derrotados.', 'gm'));
-    return;
-  }
-  if (orderChars.length > 0 && orderChars.every((x) => x.hp <= 0)) {
-    s.combat = false;
-    s.combatPartyId = undefined;
-    s.order = [];
-    s.actionUsed = false;
-    s.movementUsed = 0;
-    s.logs.push(entry('Os combatentes caíram inconscientes.', 'gm'));
-    return;
-  }
-  if (!s.order || s.order.length === 0) {
-    s.combat = false;
-    s.combatPartyId = undefined;
-    return;
-  }
-  let safety = 0;
-  do {
-    s.turn = (s.turn + 1) % s.order.length;
-    if (s.turn === 0) s.round++;
-    safety++;
-    if (safety > s.order.length + 2) {
-      // All entities are dead or missing — end combat
-      s.combat = false;
-      s.combatPartyId = undefined;
-      s.order = [];
-      s.actionUsed = false;
+  tickSrdSpellEffects(s);
+  const resetCombatState =
+    () => {
+     s.actionUsed = false;
+      s.bonusActionUsed =
+        false;
       s.movementUsed = 0;
-      s.logs.push(entry('O combate terminou — nenhuma criatura ativa restante.', 'gm'));
+      s.movementBonusSquares =
+        0;
+      s.disengagedActorId =
+        undefined;
+      s.spellSlotUsedThisTurn =
+        false;
+    };
+
+  const orderEnemies =
+    (s.enemies || [])
+      .filter(
+        (enemy) =>
+          (s.order || [])
+            .includes(
+              enemy.id
+            )
+      );
+
+  const orderChars =
+    (s.characters || [])
+      .filter(
+        (character) =>
+          (s.order || [])
+            .includes(
+              character.id
+            )
+      );
+
+  if (
+    orderEnemies.length > 0 &&
+    orderEnemies.every(
+      (enemy) =>
+        enemy.hp <= 0
+    )
+  ) {
+    s.combat = false;
+    s.combatPartyId =
+      undefined;
+    s.order = [];
+    resetCombatState();
+
+    s.logs.push(
+      entry(
+        'Vit?ria! Todos os inimigos do combate foram derrotados.',
+        'gm'
+      )
+    );
+
+    return;
+  }
+
+  if (
+    orderChars.length > 0 &&
+    orderChars.every(
+      (character) =>
+        character.hp <= 0
+    )
+  ) {
+    s.combat = false;
+    s.combatPartyId =
+      undefined;
+    s.order = [];
+    resetCombatState();
+
+    s.logs.push(
+      entry(
+        'Os combatentes ca?ram inconscientes.',
+        'gm'
+      )
+    );
+
+    return;
+  }
+
+  if (
+    !s.order ||
+    s.order.length === 0
+  ) {
+    s.combat = false;
+    s.combatPartyId =
+      undefined;
+    resetCombatState();
+    return;
+  }
+
+  let safety = 0;
+
+  do {
+    s.turn =
+      (
+        s.turn + 1
+      ) %
+      s.order.length;
+
+    if (
+      s.turn === 0
+    ) {
+      s.round++;
+    }
+
+    safety++;
+
+    if (
+      safety >
+      s.order.length + 2
+    ) {
+      s.combat = false;
+      s.combatPartyId =
+        undefined;
+      s.order = [];
+      resetCombatState();
+
+      s.logs.push(
+        entry(
+          'O combate terminou ? nenhuma criatura ativa restante.',
+          'gm'
+        )
+      );
+
       return;
     }
-    const entity = [...s.characters, ...s.enemies].find((x) => x.id === s.order[s.turn]);
-    if (!entity) continue; // Entity no longer exists — skip
-    if (entity.hp > 0) break; // Found alive entity
+
+    const entity =
+      [
+        ...s.characters,
+        ...s.enemies
+      ].find(
+        (candidate) =>
+          candidate.id ===
+          s.order[
+            s.turn
+          ]
+      );
+
+    if (!entity) {
+      continue;
+    }
+
+    if (
+      entity.hp > 0
+    ) {
+      break;
+    }
   } while (true);
 
-  // Ready action for newly active entity
-  s.actionUsed = false;
-  s.movementUsed = 0;
+  resetCombatState();
+
+  const activeId =
+    s.order[
+      s.turn
+    ];
+
+  s.reactionUsedBy =
+    s.reactionUsedBy ||
+    {};
+
+  s.reactionPolicyBy =
+    s.reactionPolicyBy ||
+    {};
+
+  /*
+   * A Rea??o volta no in?cio do pr?ximo turno
+   * daquela criatura.
+   */
+  s.reactionUsedBy[
+    activeId
+  ] =
+    false;
+
+  const activeHero =
+    s.characters.find(
+      (character) =>
+        character.id ===
+        activeId
+    );
+
+  if (activeHero) {
+    /*
+     * Dodge e Shield duram at? o in?cio
+     * deste novo turno.
+     */
+    activeHero.conditions =
+      (activeHero.conditions || [])
+        .filter(
+          (condition) => {
+            const normalized =
+              condition
+                .normalize('NFD')
+                .replace(
+                  /[\u0300-\u036f]/g,
+                  ''
+                )
+                .toLowerCase();
+
+            return (
+              !normalized.includes(
+                'esquivando'
+              ) &&
+              !normalized.includes(
+                'escudo arcano'
+              )
+            );
+          }
+        );
+
+    if (
+      s.reactionPolicyBy[
+        activeId
+      ] ===
+      'ready-melee'
+    ) {
+      s.reactionPolicyBy[
+        activeId
+      ] =
+        'opportunity';
+    }
+
+    if (
+      activeHero.hp <= 0
+    ) {
+      activeHero.raging =
+        false;
+    }
+
+    touchChar(
+      activeHero
+    );
+  }
+}
+
+function applyAuthoritativeCharacterDamage(
+  s: State,
+  target: Character,
+  damage: number,
+  sourceText: string = ''
+) {
+  const damageType =
+    inferSrdWeaponDamageType(
+      sourceText
+    ) ||
+    inferSrdDamageTypeFromText(
+      sourceText
+    );
+
+  const resolution =
+    applySrdTypedCharacterDamage(
+      s,
+      target,
+      damage,
+      damageType
+    );
+
+  if (
+    damageType &&
+    (
+      resolution.immune ||
+      resolution.resisted ||
+      resolution.vulnerable
+    )
+  ) {
+    s.logs.push(
+      entry(
+        target.name +
+          ': ' +
+          resolution.rawDamage +
+          ' ' +
+          damageType +
+          ' -> ' +
+          resolution.finalDamage +
+          (
+            resolution.immune
+              ? ' (imunidade).'
+              : resolution.resisted
+                ? ' (resistencia).'
+                : ' (vulnerabilidade).'
+          ),
+        'roll'
+      )
+    );
+  }
+
+  if (
+    resolution.temporaryHpAbsorbed > 0
+  ) {
+    s.logs.push(
+      entry(
+        target.name +
+          ' absorveu ' +
+          resolution.temporaryHpAbsorbed +
+          ' de dano com PV temporarios.',
+        'roll'
+      )
+    );
+  }
+
+  if (resolution.concentrationChecked) {
+    if (resolution.concentrationSave) {
+      s.logs.push(
+        entry(
+          target.name +
+            ' testa Concentracao: ' +
+            resolution.concentrationSave.total +
+            ' vs CD ' +
+            resolution.concentrationSave.dc +
+            (
+              resolution.concentrationBroken
+                ? ' - concentracao perdida.'
+                : ' - concentracao mantida.'
+            ),
+          'roll'
+        )
+      );
+    } else if (resolution.concentrationBroken) {
+      s.logs.push(
+        entry(
+          target.name +
+            ' perdeu a concentracao ao ficar incapacitado.',
+          'roll'
+        )
+      );
+    }
+  }
+
+  touchChar(target);
+  return resolution;
+}
+
+function applyAutoShieldReaction(
+  s: State,
+  target: Character,
+  result: AttackResult
+): void {
+  if (
+    !result.hit ||
+    result.isCrit
+  ) {
+    return;
+  }
+
+  /* SRD_3B_C1_REACTION_GATE */
+  if (!canUseSrdReaction(target)) {
+    return;
+  }
+
+  s.reactionUsedBy =
+    s.reactionUsedBy ||
+    {};
+
+  s.reactionPolicyBy =
+    s.reactionPolicyBy ||
+    {};
+
+  if (
+    s.reactionUsedBy[
+      target.id
+    ]
+  ) {
+    return;
+  }
+
+  if (
+    s.reactionPolicyBy[
+      target.id
+    ] !==
+    'shield'
+  ) {
+    return;
+  }
+
+  /*
+   * Shield so pode disparar se realmente estiver preparado.
+   */
+  if (
+    !isCharacterSpellPrepared(
+      target,
+      'Shield'
+    )
+  ) {
+    return;
+  }
+
+  const alreadyShielded =
+    (target.conditions || [])
+      .some(
+        (condition) =>
+          condition
+            .toLowerCase()
+            .includes(
+              'escudo arcano'
+            )
+      );
+
+  if (alreadyShielded) {
+    return;
+  }
+
+  /*
+   * O auto-Shield s? consome o recurso se
+   * +5 CA realmente transformar o acerto em erro.
+   */
+  if (
+    result.totalAttack >= result.targetAc + 5
+  ) {
+    return;
+  }
+
+  const available =
+    (
+      target.usedSlots[0] ||
+      0
+    ) <
+    (
+      target.slots[0] ||
+      0
+    );
+
+  if (!available) {
+    return;
+  }
+
+  if (
+    !spendSpellSlot(
+      target,
+      1
+    )
+  ) {
+    return;
+  }
+
+  s.reactionUsedBy[
+    target.id
+  ] =
+    true;
+
+  target.conditions =
+    target.conditions ||
+    [];
+
+  target.conditions.push(
+    'Escudo Arcano (+5 CA)'
+  );
+
+  result.hit =
+    false;
+  result.damage =
+    0;
+  result.hpAfter =
+    result.hpBefore;
+  result.targetAc = result.targetAc + 5;
+
+  result.text +=
+    ' Escudo Arcano ? usado como Rea??o e o ataque ? bloqueado.';
+
+  touchChar(target);
+
+  s.logs.push(
+    entry(
+      '? ' +
+        target.name +
+        ' conjura Escudo Arcano como Rea??o (+5 CA).',
+      'roll'
+    )
+  );
 }
 
 function executeSingleEnemyRevenge(
@@ -3166,8 +6272,18 @@ function executeSingleEnemyRevenge(
       profile.attackRange > 1
     );
 
-  attacker.hp =
-    result.hpAfter;
+  applyAutoShieldReaction(s, attacker, result);
+
+  applyAuthoritativeCharacterDamage(
+    s,
+    attacker,
+    result.damage,
+    enemy.weapon ||
+      profile.attackName
+  );
+
+  result.hpAfter =
+    attacker.hp;
 
   touchChar(attacker);
 
@@ -3205,17 +6321,280 @@ function executeEnemyAI(s: State) {
       )
     );
 
+  const performHeroReactionAttack = (
+    hero: Character,
+    enemy: Enemy,
+    reason: string
+  ) => {
+    s.reactionUsedBy =
+      s.reactionUsedBy ||
+      {};
+
+    if (
+      s.reactionUsedBy[
+        hero.id
+      ] ||
+      hero.hp <= 0 ||
+      enemy.hp <= 0 ||
+      !canUseSrdReaction(hero) /* SRD_3B_C1_HERO_REACTION_GATE */
+    ) {
+      return;
+    }
+
+    const weaponInfo =
+      getWeaponMaxRange(
+        hero.weapon
+      );
+
+    const useUnarmed =
+      weaponInfo.isRanged;
+
+    const strengthMod =
+      mod(
+        hero.stats[0]
+      );
+
+    const attackBonus =
+      useUnarmed
+        ? prof(
+            hero.level
+          ) +
+          strengthMod -
+          2 *
+            (
+              hero.exhaustion ||
+              0
+            )
+        : hero.attack -
+          2 *
+            (
+              hero.exhaustion ||
+              0
+            );
+
+    let damage =
+      useUnarmed
+        ? addFormulaBonus(
+            '1d1',
+            strengthMod
+          )
+        : hero.damage;
+
+    if (
+      hero.raging
+    ) {
+      damage =
+        addFormulaBonus(
+          damage,
+          getRageDamageBonus(
+            hero.level
+          )
+        );
+
+      hero.rageEndsAtRound =
+        (s.round || 1) +
+        1;
+    }
+
+    /* SRD_3B_C1_BREAK_REACTION_INVISIBILITY */
+    breakSrdInvisibilityForActor(
+      s,
+      hero.id
+    );
+
+    const result =
+      resolveAttack(
+        {
+          name:
+            hero.name +
+            ' ? ' +
+            reason,
+          attack:
+            attackBonus,
+          damage,
+          conditions:
+            hero.conditions,
+          weapon:
+            useUnarmed
+              ? 'Ataque Desarmado'
+              : hero.weapon
+        },
+        {
+          id:
+            enemy.id,
+          name:
+            enemy.name,
+          ac:
+            enemy.ac,
+          hp:
+            enemy.hp,
+          conditions:
+            enemy.conditions
+        },
+        'normal',
+        false
+      );
+
+
+    /* SRD_3B_C1_REACTION_ATTACK_PIPELINE */
+    applySrdAdvancedAttackToEnemy(
+      s,
+      hero,
+      enemy,
+      result,
+      useUnarmed
+        ? 'Ataque Desarmado'
+        : hero.weapon
+    );
+
+    s.reactionUsedBy[
+      hero.id
+    ] =
+      true;
+
+    hero.conditions =
+      (hero.conditions || [])
+        .filter(
+          (condition) =>
+            !condition
+              .normalize('NFD')
+              .replace(
+                /[\u0300-\u036f]/g,
+                ''
+              )
+              .toLowerCase()
+              .includes(
+                'oculto'
+              )
+        );
+
+    touchChar(hero);
+    touchChar(enemy);
+
+    s.logs.push(
+      entry(
+        '?? Rea??o: ' +
+          result.text,
+        'roll'
+      )
+    );
+
+    if (
+      enemy.hp <= 0
+    ) {
+      const xp =
+        getCreatureProfile(
+          enemy.name
+        ).xpReward;
+
+      const recipients =
+        hero.partyId
+          ? s.characters.filter(
+              (member) =>
+                member.partyId ===
+                hero.partyId
+            )
+          : [hero];
+
+      for (
+        const member of
+        recipients
+      ) {
+        member.xp =
+          (member.xp || 0) +
+          xp;
+
+        touchChar(member);
+      }
+
+      resolveEnemyDefeatProgression(
+        s,
+        hero,
+        enemy
+      );
+
+      s.logs.push(
+        entry(
+          '?? ' +
+            enemy.name +
+            ' cai durante a Rea??o de ' +
+            hero.name +
+            '. +' +
+            xp +
+            ' XP.',
+          'gm'
+        )
+      );
+    }
+  };
+
   const moveRelative = (
     enemy: Enemy,
     target: Character,
     toward: boolean,
     steps: number
   ) => {
+    /* SRD_3B_C1_SLOW_ENEMY_MOVEMENT */
+    if (
+      hasSrdAdvancedCondition(
+        enemy,
+        'slow',
+        'lentidao'
+      )
+    ) {
+      steps = Math.floor(steps / 2);
+    }
+    s.reactionPolicyBy =
+      s.reactionPolicyBy ||
+      {};
+
+    s.reactionUsedBy =
+      s.reactionUsedBy ||
+      {};
+
+    const policy =
+      s.reactionPolicyBy[
+        target.id
+      ] ||
+      'opportunity';
+
+    /*
+     * Opportunity Attack ocorre imediatamente antes
+     * de a criatura deixar alcance.
+     */
+    if (
+      !toward &&
+      distance(
+        enemy,
+        target
+      ) <= 1 &&
+      policy ===
+        'opportunity'
+    ) {
+      performHeroReactionAttack(
+        target,
+        enemy,
+        'Ataque de Oportunidade'
+      );
+
+      if (
+        enemy.hp <= 0
+      ) {
+        return;
+      }
+    }
+
     for (
       let i = 0;
       i < steps;
       i++
     ) {
+      const oldDistance =
+        distance(
+          enemy,
+          target
+        );
+
       const sx =
         Math.sign(
           target.x -
@@ -3249,6 +6628,36 @@ function executeEnemyAI(s: State) {
 
       enemy.x = nx;
       enemy.y = ny;
+
+      const newDistance =
+        distance(
+          enemy,
+          target
+        );
+
+      /*
+       * Ready padr?o da UI: atacar a primeira criatura
+       * que entrar no alcance corpo a corpo.
+       */
+      if (
+        toward &&
+        policy ===
+          'ready-melee' &&
+        oldDistance > 1 &&
+        newDistance <= 1
+      ) {
+        performHeroReactionAttack(
+          target,
+          enemy,
+          'A??o Preparada'
+        );
+
+        if (
+          enemy.hp <= 0
+        ) {
+          break;
+        }
+      }
     }
 
     touchChar(enemy);
@@ -3344,7 +6753,10 @@ function executeEnemyAI(s: State) {
       s.combatPartyId =
         undefined;
       s.actionUsed = false;
+      s.bonusActionUsed = false;
       s.movementUsed = 0;
+      s.movementBonusSquares = 0;
+      s.spellSlotUsedThisTurn = false;
       break;
     }
 
@@ -3542,14 +6954,19 @@ function executeEnemyAI(s: State) {
           const hero of
           targets
         ) {
-          const save =
-            d20().raw +
-            mod(
-              hero.stats[1]
+          /* SRD_3B_B3_SPECIAL_SAVE */
+          const saveResult =
+            rollSrdCharacterSavingThrow(
+              hero,
+              1,
+              dc
             );
 
+          const save =
+            saveResult.total;
+
           const saved =
-            save >= dc;
+            saveResult.saved;
 
           const dealt =
             saved
@@ -3558,12 +6975,15 @@ function executeEnemyAI(s: State) {
                 )
               : damage;
 
-          hero.hp =
-            Math.max(
-              0,
-              hero.hp -
-                dealt
-            );
+          /* SRD_3B_B3_SPECIAL_DAMAGE */
+          applyAuthoritativeCharacterDamage(
+            s,
+            hero,
+            dealt,
+            profile.specialName ||
+              profile.specialKind ||
+              'special'
+          );
 
           touchChar(hero);
 
@@ -3652,8 +7072,19 @@ function executeEnemyAI(s: State) {
           true
         );
 
-      target.hp =
-        result.hpAfter;
+      applyAutoShieldReaction(s, target, result);
+
+      applyAuthoritativeCharacterDamage(
+        s,
+        target,
+        result.damage,
+        enemy.weapon ||
+          profile.specialName ||
+          profile.attackName
+      );
+
+      result.hpAfter =
+        target.hp;
 
       touchChar(target);
 
@@ -3709,8 +7140,19 @@ function executeEnemyAI(s: State) {
           }
         );
 
-      target.hp =
-        result.hpAfter;
+      applyAutoShieldReaction(s, target, result);
+
+      applyAuthoritativeCharacterDamage(
+        s,
+        target,
+        result.damage,
+        enemy.weapon ||
+          profile.specialName ||
+          profile.attackName
+      );
+
+      result.hpAfter =
+        target.hp;
 
       if (
         result.hit &&
@@ -3830,8 +7272,19 @@ function executeEnemyAI(s: State) {
           profile.attackRange > 1
         );
 
-      target.hp =
-        result.hpAfter;
+      applyAutoShieldReaction(s, target, result);
+
+      applyAuthoritativeCharacterDamage(
+        s,
+        target,
+        result.damage,
+        enemy.weapon ||
+          profile.specialName ||
+          profile.attackName
+      );
+
+      result.hpAfter =
+        target.hp;
 
       touchChar(target);
 
@@ -3890,6 +7343,9 @@ function executeEnemyAI(s: State) {
 
   if (s.combat) {
     s.actionUsed = false;
+    s.bonusActionUsed = false;
     s.movementUsed = 0;
+    s.movementBonusSquares = 0;
+    s.spellSlotUsedThisTurn = false;
   }
 }

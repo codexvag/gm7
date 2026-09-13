@@ -27,12 +27,22 @@ import {
   signed,
   newCharacter,
   calculateEquippedStats,
+  getSpellSlotsForClass,
   POINT_BUY_COSTS,
   TOTAL_POINT_BUY_POINTS,
   calculatePointBuyScoreCost,
   calculateTotalPointBuyCost,
   type Character
 } from '@/lib/game-engine';
+
+import {
+  SpellSelectionPanel
+} from '@/components/game/spell-selection-panel';
+
+import {
+  buildLegacySpellString,
+  validateInitialSpellSelection
+} from '@/lib/srd-spellbook';
 
 interface CharacterCreatorProps {
   isOpen: boolean;
@@ -243,7 +253,7 @@ const CLASS_CONFIGS: Record<string, {
 const STANDARD_ARRAY = [15, 14, 13, 12, 10, 8];
 
 export function CharacterCreator({ isOpen, onClose, onSave, busy }: CharacterCreatorProps) {
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
 
   // Character Draft State
   const [name, setName] = useState('');
@@ -254,10 +264,36 @@ export function CharacterCreator({ isOpen, onClose, onSave, busy }: CharacterCre
   const [selectedSkills, setSelectedSkills] = useState<string[]>(['Atletismo', 'Intimidação']);
   const [backstory, setBackstory] = useState('');
 
+  const [
+    selectedCantrips,
+    setSelectedCantrips
+  ] =
+    useState<string[]>([]);
+
+  const [
+    selectedPreparedSpells,
+    setSelectedPreparedSpells
+  ] =
+    useState<string[]>([]);
+
+  const [
+    selectedSpellbook,
+    setSelectedSpellbook
+  ] =
+    useState<string[]>([]);
+
   if (!isOpen) return null;
 
   const speciesInfo = SPECIES_TRAITS[chosenSpecies] || SPECIES_TRAITS.Humano;
   const classInfo = CLASS_CONFIGS[chosenClass] || CLASS_CONFIGS.Guerreiro;
+
+  const spellSelectionValidation =
+    validateInitialSpellSelection(
+      chosenClass,
+      selectedCantrips,
+      selectedPreparedSpells,
+      selectedSpellbook
+    );
 
   // Final attributes with racial bonus
   const finalStats = baseStats.map((val, idx) => val + speciesInfo.statsBonus[idx]);
@@ -332,9 +368,34 @@ export function CharacterCreator({ isOpen, onClose, onSave, busy }: CharacterCre
       hp: maxHp,
       maxHp,
       speed: speciesInfo.speed,
-      slots: classInfo.slots,
+      slots:
+        getSpellSlotsForClass(
+          chosenClass,
+          1
+        ),
+
+      usedSlots:
+        [0,0,0,0,0,0,0,0,0],
       features: `${speciesInfo.desc}\n\n${classInfo.features}`,
-      spells: classInfo.spells || '',
+      knownCantrips:
+        selectedCantrips,
+
+      preparedSpells:
+        selectedPreparedSpells,
+
+      spellbook:
+        selectedSpellbook,
+
+      spellSelectionVersion:
+        1,
+
+      spells:
+        buildLegacySpellString(
+          selectedCantrips,
+          selectedPreparedSpells,
+          chosenClass,
+          1
+        ),
       spellAbility: classInfo.spellAbility !== undefined ? classInfo.spellAbility : 3,
       notes: backstory,
       equipment: {
@@ -357,7 +418,7 @@ export function CharacterCreator({ isOpen, onClose, onSave, busy }: CharacterCre
           <div className="flex items-center gap-2">
             <User size={20} className="text-amber-400" />
             <h2 className="font-serif font-bold text-amber-200 text-base sm:text-lg">
-              Forjar Novo Aventureiro • Passo {step} de 4
+              Forjar Novo Aventureiro • Passo {step} de 5
             </h2>
           </div>
           <button
@@ -373,8 +434,9 @@ export function CharacterCreator({ isOpen, onClose, onSave, busy }: CharacterCre
           {[
             { s: 1, label: 'Identidade & Classe' },
             { s: 2, label: 'Atributos' },
-            { s: 3, label: 'Perícias' },
-            { s: 4, label: 'Resumo & Equipamento' }
+            { s: 3, label: 'Per?cias' },
+            { s: 4, label: 'Magias' },
+            { s: 5, label: 'Resumo' }
           ].map((item) => (
             <button
               key={item.s}
@@ -449,7 +511,29 @@ export function CharacterCreator({ isOpen, onClose, onSave, busy }: CharacterCre
                       key={cl}
                       onClick={() => {
                         setChosenClass(cl);
-                        setSelectedSkills(CLASS_CONFIGS[cl].availableSkills.slice(0, CLASS_CONFIGS[cl].skillsCount));
+
+                        setSelectedSkills(
+                          CLASS_CONFIGS[
+                            cl
+                          ].availableSkills.slice(
+                            0,
+                            CLASS_CONFIGS[
+                              cl
+                            ].skillsCount
+                          )
+                        );
+
+                        setSelectedCantrips(
+                          []
+                        );
+
+                        setSelectedPreparedSpells(
+                          []
+                        );
+
+                        setSelectedSpellbook(
+                          []
+                        );
                       }}
                       className={`p-3 rounded-xl border text-left transition-all ${
                         chosenClass === cl
@@ -696,6 +780,26 @@ export function CharacterCreator({ isOpen, onClose, onSave, busy }: CharacterCre
 
           {step === 4 && (
             <div className="space-y-4 animate-slide-up">
+              <SpellSelectionPanel
+                className={chosenClass}
+                selectedCantrips={selectedCantrips}
+                selectedPrepared={selectedPreparedSpells}
+                selectedSpellbook={selectedSpellbook}
+                onCantripsChange={setSelectedCantrips}
+                onPreparedChange={setSelectedPreparedSpells}
+                onSpellbookChange={setSelectedSpellbook}
+              />
+
+              {!spellSelectionValidation.ok && (
+                <div className="rounded-xl border border-amber-800/60 bg-amber-950/20 p-3 text-xs text-amber-200 leading-relaxed">
+                  {spellSelectionValidation.reason}
+                </div>
+              )}
+            </div>
+          )}
+
+          {step === 5 && (
+            <div className="space-y-4 animate-slide-up">
               <div className="p-4 bg-gradient-to-br from-zinc-900 to-black border border-amber-900/60 rounded-2xl flex items-center justify-between">
                 <div>
                   <h3 className="font-serif font-black text-xl text-amber-200">
@@ -740,9 +844,9 @@ export function CharacterCreator({ isOpen, onClose, onSave, busy }: CharacterCre
             <div />
           )}
 
-          {step < 4 ? (
+          {step < 5 ? (
             <button
-              disabled={step === 2 && !isStep2Valid}
+              disabled={(step === 2 && !isStep2Valid) || (step === 4 && !spellSelectionValidation.ok)}
               onClick={() => setStep((step + 1) as any)}
               className={`flex items-center gap-1 text-xs py-1.5 px-4 rounded-xl font-bold transition-all ${
                 step === 2 && !isStep2Valid
@@ -755,7 +859,7 @@ export function CharacterCreator({ isOpen, onClose, onSave, busy }: CharacterCre
             </button>
           ) : (
             <button
-              disabled={busy || !isStep2Valid}
+              disabled={busy || !isStep2Valid || !spellSelectionValidation.ok}
               onClick={handleFinish}
               className={`flex items-center gap-1.5 text-xs py-2 px-5 font-bold shadow-lg rounded-xl transition-all ${
                 busy || !isStep2Valid

@@ -16,6 +16,12 @@ import {
   addInventoryItem
 } from './inventory-utils';
 
+import {
+  rebuildCampaignProofFromEvidence,
+  getTravelPermissionFromProof,
+  markCampaignProof
+} from './campaign-progression';
+
 function membersOf(
   state: State,
   hero: Character
@@ -118,175 +124,14 @@ export function reconcileLegacyProgression(
   state: State,
   hero: Character
 ): boolean {
-  const before =
-    JSON.stringify({
-      q: hero.questProgress || {},
-      f: hero.worldFlags || {}
-    });
-
-  const location =
-    hero.location ??
-    0;
-
-  const history =
-    (state.logs || [])
-      .slice(-200)
-      .map((item) =>
-        item.text.toLowerCase()
-      )
-      .join('\n');
-
-  // Old saves could freely walk through maps.
-  // Reconstruct the minimum coherent progression.
-  if (location >= 1) {
-    progress(
-      state,
-      hero,
-      {
-        doran_talked: true,
-        elenor_talked: true,
-        kaelen_talked: true
-      },
-      {
-        expedition_unlocked: true
-      }
-    );
-  }
-
-  if (location >= 2) {
-    progress(
-      state,
-      hero,
-      {
-        forest_cleared: true
-      },
-      {
-        bridge_cleared: true,
-        trade_route_open: true,
-        ruins_unlocked: true,
-        dragon_rumor_stage1: true
-      }
-    );
-  }
-
-  if (location >= 3) {
-    progress(
-      state,
-      hero,
-      {
-        ruins_cleared: true,
-        dungeon_entered: true
-      },
-      {
-        abbey_cleared: true,
-        catacombs_unsealed: true,
-        dungeon_unlocked: true,
-        dragon_rumor_stage3: true
-      }
-    );
-  }
-
-  const scopedEnemies =
-    (state.enemies || []).filter(
-      (enemy) =>
-        belongsTo(enemy, hero) ||
-        (
-          !enemy.partyId &&
-          !enemy.ownerCharId
-        )
-    );
-
-  const deadMalakor =
-    scopedEnemies.some(
-      (enemy) =>
-        enemy.hp <= 0 &&
-        enemy.name
-          .toLowerCase()
-          .includes('malakor')
-    ) ||
-    (
-      history.includes('malakor') &&
-      (
-        history.includes('derrotado') ||
-        history.includes('tombou') ||
-        history.includes('vitória')
-      )
-    );
-
-  if (
-    deadMalakor ||
-    location >= 4
-  ) {
-    progress(
-      state,
-      hero,
-      {
-        dungeon_cleared: true,
-        malakor_defeated: true
-      },
-      {
-        malakor_defeated: true,
-        canyon_unlocked: true
-      }
-    );
-  }
-
-  if (location >= 5) {
-    progress(
-      state,
-      hero,
-      {
-        canyon_cleared: true
-      },
-      {
-        canyon_secured: true,
-        dragon_lair_unlocked: true,
-        dragon_presence_imminent: true
-      }
-    );
-  }
-
-  const deadIgnisrax =
-    scopedEnemies.some(
-      (enemy) =>
-        enemy.hp <= 0 &&
-        enemy.name
-          .toLowerCase()
-          .includes('ignisrax')
-    ) ||
-    (
-      history.includes('ignisrax') &&
-      (
-        history.includes('derrotado') ||
-        history.includes('tombou') ||
-        history.includes('vitória contra o chefe')
-      )
-    );
-
-  if (deadIgnisrax) {
-    progress(
-      state,
-      hero,
-      {
-        ignisrax_defeated: true,
-        campaign_completed: true
-      },
-      {
-        ignisrax_defeated: true,
-        campaign_completed: true,
-        valdoria_saved: true,
-        endgame_unlocked: true
-      }
-    );
-  }
-
-  const after =
-    JSON.stringify({
-      q: hero.questProgress || {},
-      f: hero.worldFlags || {}
-    });
-
-  return before !== after;
+  /*
+   * Legacy name retained because route.ts already calls it.
+   * It no longer grants completion from location.
+   */
+  return rebuildCampaignProofFromEvidence(
+    state,
+    hero
+  );
 }
 
 export function getTravelPermission(
@@ -297,95 +142,11 @@ export function getTravelPermission(
   allowed: boolean;
   reason?: string;
 } {
-  if (
-    !Number.isInteger(destination) ||
-    destination < 0 ||
-    destination >= locations.length
-  ) {
-    return {
-      allowed: false,
-      reason: 'Destino inválido.'
-    };
-  }
-
-  const current =
-    hero.location ??
-    0;
-
-  if (destination === 0) {
-    return { allowed: true };
-  }
-
-  // Returning to regions already reached is always allowed.
-  if (destination <= current) {
-    return { allowed: true };
-  }
-
-  const qp =
-    hero.questProgress || {};
-
-  const flags =
-    heroFlags(hero);
-
-  if (
-    destination === 1 &&
-    !qp.kaelen_talked
-  ) {
-    return {
-      allowed: false,
-      reason:
-        'Os portões ainda estão fechados. Fale primeiro com Doran, Elenor e o Capitão Kaelen.'
-    };
-  }
-
-  if (
-    destination === 2 &&
-    !qp.forest_cleared &&
-    !flags.ruins_unlocked
-  ) {
-    return {
-      allowed: false,
-      reason:
-        'As Ruínas ainda estão bloqueadas. Elimine a ameaça da Floresta dos Sussurros.'
-    };
-  }
-
-  if (
-    destination === 3 &&
-    !qp.ruins_cleared &&
-    !flags.catacombs_unsealed
-  ) {
-    return {
-      allowed: false,
-      reason:
-        'A entrada das Catacumbas continua selada. Expurgue primeiro as Ruínas da Abadia.'
-    };
-  }
-
-  if (
-    destination === 4 &&
-    !qp.malakor_defeated
-  ) {
-    return {
-      allowed: false,
-      reason:
-        'O Desfiladeiro permanece bloqueado enquanto Malakor controlar as Catacumbas.'
-    };
-  }
-
-  if (
-    destination === 5 &&
-    !qp.canyon_cleared &&
-    !flags.dragon_lair_unlocked
-  ) {
-    return {
-      allowed: false,
-      reason:
-        'O Covil ainda não pode ser alcançado. Destrua a vanguarda dracônica no Desfiladeiro.'
-    };
-  }
-
-  return { allowed: true };
+  return getTravelPermissionFromProof(
+    state,
+    hero,
+    destination
+  );
 }
 
 type Template = {
@@ -1428,6 +1189,12 @@ export function resolveEnemyDefeatProgression(
     null;
 
   if (biome === 'forest') {
+    markCampaignProof(
+      state,
+      hero,
+      'forest_cleared'
+    );
+
     reward =
       firstClearReward(
         state,
@@ -1456,6 +1223,12 @@ export function resolveEnemyDefeatProgression(
   }
 
   if (biome === 'ruins') {
+    markCampaignProof(
+      state,
+      hero,
+      'ruins_cleared'
+    );
+
     reward =
       firstClearReward(
         state,
@@ -1497,6 +1270,12 @@ export function resolveEnemyDefeatProgression(
       );
 
     if (malakorDead) {
+      markCampaignProof(
+        state,
+        hero,
+        'malakor_defeated'
+      );
+
       reward =
         firstClearReward(
           state,
@@ -1525,6 +1304,12 @@ export function resolveEnemyDefeatProgression(
   }
 
   if (biome === 'canyon') {
+    markCampaignProof(
+      state,
+      hero,
+      'canyon_cleared'
+    );
+
     reward =
       firstClearReward(
         state,
@@ -1565,6 +1350,12 @@ export function resolveEnemyDefeatProgression(
       );
 
     if (ignisraxDead) {
+      markCampaignProof(
+        state,
+        hero,
+        'ignisrax_defeated'
+      );
+
       reward =
         firstClearReward(
           state,
@@ -1609,4 +1400,177 @@ export function resolveEnemyDefeatProgression(
       'gm'
     )
   );
+}
+
+/**
+ * Retoma uma microaventura j? aceita sem recriar seus inimigos.
+ * Se o ?ltimo inimigo j? morreu, sincroniza a conclus?o.
+ */
+export function continueAdventureForHero(
+  state: State,
+  hero: Character,
+  adventureId?: string
+): {
+  success: boolean;
+  completed: boolean;
+  log: string;
+} {
+  const id =
+    adventureId ||
+    hero.activeMicroAdventureId;
+
+  if (!id) {
+    return {
+      success: false,
+      completed: false,
+      log:
+        'Este personagem n?o possui uma microaventura ativa.'
+    };
+  }
+
+  const adventure =
+    MICRO_ADVENTURES[id];
+
+  if (!adventure) {
+    return {
+      success: false,
+      completed: false,
+      log:
+        'A microaventura ativa n?o existe mais no cat?logo.'
+    };
+  }
+
+  if (
+    hero.activeMicroAdventureId !==
+    id
+  ) {
+    const start =
+      startAdventureForHero(
+        state,
+        hero,
+        id
+      );
+
+    return {
+      success:
+        start.success,
+      completed:
+        false,
+      log:
+        start.log
+    };
+  }
+
+  const remaining =
+    (state.enemies || []).filter(
+      (enemy) =>
+        enemy.hp > 0 &&
+        enemy.adventureId ===
+          id &&
+        belongsTo(
+          enemy,
+          hero
+        )
+    );
+
+  if (
+    remaining.length === 0
+  ) {
+    const completion =
+      awardAdventure(
+        state,
+        hero
+      );
+
+    if (completion) {
+      return {
+        success: true,
+        completed: true,
+        log: completion
+      };
+    }
+  }
+
+  /*
+   * Reposi??o no mapa da pr?pria aventura.
+   * O bot?o Continuar nunca usa a Vila apenas porque houve respawn.
+   */
+  const locationIndex =
+    id ===
+      'bridge-sentinel'
+      ? 1
+      : adventure.locationIndex;
+
+  const biome =
+    locations[
+      locationIndex
+    ]?.biome ||
+    hero.biome ||
+    'forest';
+
+  const party =
+    membersOf(
+      state,
+      hero
+    );
+
+  for (
+    let index = 0;
+    index < party.length;
+    index++
+  ) {
+    const member =
+      party[index];
+
+    if (
+      member.activeMicroAdventureId !==
+      id
+    ) {
+      continue;
+    }
+
+    member.location =
+      locationIndex;
+
+    member.biome =
+      biome;
+
+    member.x =
+      3 +
+      (index % 2);
+
+    member.y =
+      5 +
+      Math.floor(
+        index / 2
+      );
+
+    member.updatedAt =
+      Date.now();
+  }
+
+  const text =
+    '?? [Contrato retomado: ' +
+    adventure.title +
+    ']\n' +
+    (
+      remaining.length > 0
+        ? 'Objetivo atual: derrote as amea?as restantes (' +
+          remaining.length +
+          ').'
+        : 'O objetivo est? sendo sincronizado.'
+    );
+
+  state.logs.push(
+    entry(
+      text,
+      'gm'
+    )
+  );
+
+  return {
+    success: true,
+    completed: false,
+    log: text
+  };
 }

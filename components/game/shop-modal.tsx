@@ -20,6 +20,10 @@ import type { Character } from '@/lib/game-engine';
 import { ITEMS_CATALOG } from '@/lib/game-engine';
 import { generateShopStock, type ProceduralItem, type ItemRarity } from '@/lib/procedural-items';
 import { playSfx } from '@/lib/sound-effects';
+import {
+  parseInventoryStacks,
+  normalizeInventoryName
+} from '@/lib/inventory-utils';
 
 export interface ShopMerchant {
   id: string;
@@ -143,33 +147,103 @@ export function ShopModal({
     return generateShopStock(tier as any, 9876);
   }, [merchant, hero]);
 
-  // Inventory items parsing for hero
-  const heroInventoryList = useMemo(() => {
-    if (!hero?.inventory) return [];
-    return hero.inventory
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .map((line, idx) => {
-        // Look up item in catalog if possible
-        const matched = Object.values(ITEMS_CATALOG).find(
-          (c) => c.name.toLowerCase() === line.toLowerCase() || line.toLowerCase().startsWith(c.name.toLowerCase())
-        );
-        const baseValue = matched?.value || 15;
-        const salePrice = Math.max(1, Math.round(baseValue * 0.5 * priceMultiplier));
-        return {
-          uid: `${line}-${idx}`,
-          name: line,
-          baseValue,
-          salePrice,
-          type: matched?.type || 'geral',
-          rarity: (matched?.rarity || 'comum') as ItemRarity,
-          description: matched?.description || 'Item de aventureiro útil na jornada.'
-        };
-      });
-  }, [hero?.inventory, priceMultiplier]);
+  // Inventory and shop now share the exact same stack source.
+  const heroInventoryList =
+    useMemo(() => {
+      if (!hero?.inventory) {
+        return [];
+      }
 
-  if (!isOpen || !merchant || !hero) return null;
+      const persistedItemData =
+        ((hero as any).inventoryItemData || {}) as Record<
+          string,
+          any
+        >;
+
+      return parseInventoryStacks(
+        hero.inventory
+      ).map(
+        (stack, idx) => {
+          const normalized =
+            normalizeInventoryName(
+              stack.name
+            );
+
+          const matched =
+            Object.values(
+              ITEMS_CATALOG
+            ).find(
+              (candidate) =>
+                normalizeInventoryName(
+                  candidate.name
+                ) === normalized
+            ) ||
+            Object.values(
+              persistedItemData
+            ).find(
+              (candidate: any) =>
+                normalizeInventoryName(
+                  candidate.name
+                ) === normalized
+            );
+
+          const baseValue =
+            Number(
+              (matched as any)
+                ?.value
+            ) || 15;
+
+          const salePrice =
+            Math.max(
+              1,
+              Math.round(
+                baseValue *
+                0.5 *
+                priceMultiplier
+              )
+            );
+
+          return {
+            uid:
+              stack.name +
+              '-' +
+              idx,
+
+            name:
+              stack.name,
+
+            quantity:
+              stack.quantity,
+
+            baseValue,
+            salePrice,
+
+            type:
+              (matched as any)
+                ?.type ||
+              'outro',
+
+            rarity:
+              (
+                (matched as any)
+                  ?.rarity ||
+                'comum'
+              ) as ItemRarity,
+
+            description:
+              (matched as any)
+                ?.description ||
+              'Item obtido durante a aventura e preservado no invent?rio persistente.'
+          };
+        }
+      );
+    }, [
+      hero?.inventory,
+      (hero as any)?.inventoryItemData,
+      priceMultiplier
+    ]);
+
+  if (!isOpen || !merchant || !hero) return null;  if (!isOpen || !merchant || !hero) return null;
 
   const currentGold = hero.gold ?? 0;
 
@@ -218,7 +292,7 @@ export function ShopModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="relative w-full max-w-3xl max-h-[90vh] bg-gradient-to-b from-[#141210] via-[#0f0e0c] to-[#0a0908] border-2 border-amber-600/70 rounded-3xl shadow-[0_0_50px_rgba(217,119,6,0.3)] flex flex-col overflow-hidden"
+        className="relative w-full max-w-3xl max-h-[92dvh] min-h-0 bg-gradient-to-b from-[#141210] via-[#0f0e0c] to-[#0a0908] border-2 border-amber-600/70 rounded-3xl shadow-[0_0_50px_rgba(217,119,6,0.3)] flex flex-col overflow-hidden"
       >
         {/* Modal Header */}
         <div className="flex items-center justify-between p-4 sm:p-5 border-b border-amber-900/40 bg-zinc-950/60 shrink-0">
@@ -268,7 +342,7 @@ export function ShopModal({
               </span>
             )}
             <span className="text-zinc-600 font-mono">•</span>
-            <span className="text-zinc-400 text-[11px] truncate max-w-[280px] sm:max-w-md" title={economyNotice}>
+            <span className="text-zinc-400 text-[11px] whitespace-normal break-words max-w-[280px] sm:max-w-md" title={economyNotice}>
               {economyNotice || 'Rotas comerciais livres para a vila.'}
             </span>
           </div>
@@ -321,7 +395,7 @@ export function ShopModal({
         )}
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 sm:p-5 space-y-2.5">
           {activeTab === 'buy' ? (
             shopStock.length === 0 ? (
               <div className="text-center py-12 text-zinc-500 font-serif">

@@ -33,45 +33,126 @@ interface InventoryPanelProps {
 
 export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: InventoryPanelProps) {
   const [selectedItem, setSelectedItem] = useState<ItemDefinition | null>(null);
-  const [inventoryList, setInventoryList] = useState<string[]>(() => {
-    // Parse inventory text or use default catalog items
-    const parsed = hero.inventory
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-    return parsed.length > 0
-      ? parsed
-      : ['Espada Longa', 'Cota de Malha', 'Escudo de Carvalho e Ferro', 'Poção de Cura (2)', 'Tocha Alquímica'];
-  });
-
+  /*
+   * O invent?rio textual salvo pelo servidor ? a fonte da verdade.
+   * N?o filtramos mais itens s? porque n?o est?o no ITEMS_CATALOG.
+   * Isso permite visualizar loot procedural, legado e itens de miss?o.
+   */
   const inventoryStacks =
     parseInventoryStacks(
-      inventoryList.join('\n')
+      hero.inventory || ''
     );
 
-  const getQuantity = (item: ItemDefinition) => {
-    const target =
-      normalizeInventoryName(item.name);
+  const persistedItemData =
+    ((hero as any).inventoryItemData || {}) as Record<
+      string,
+      ItemDefinition
+    >;
 
-    return inventoryStacks
+  const catalogItems =
+    Object.values(
+      ITEMS_CATALOG
+    );
+
+  const ownedInventoryItems =
+    inventoryStacks.map(
+      (stack) => {
+        const normalized =
+          normalizeInventoryName(
+            stack.name
+          );
+
+        const catalogItem =
+          catalogItems.find(
+            (candidate) =>
+              normalizeInventoryName(
+                candidate.name
+              ) === normalized
+          );
+
+        const persistedItem =
+          Object.values(
+            persistedItemData
+          ).find(
+            (candidate) =>
+              normalizeInventoryName(
+                candidate.name
+              ) === normalized
+          );
+
+        const item =
+          catalogItem ||
+          persistedItem ||
+          ({
+            id:
+              'legacy-' +
+              normalized
+                .replace(
+                  /[^a-z0-9]+/g,
+                  '-'
+                )
+                .replace(
+                  /^-|-$/g,
+                  ''
+                ),
+
+            name:
+              stack.name,
+
+            type:
+              'outro',
+
+            rarity:
+              'comum',
+
+            description:
+              'Item obtido durante a aventura. Este objeto pertence ao invent?rio persistente do personagem, mesmo sem possuir uma defini??o completa no cat?logo atual.',
+
+            weight:
+              0,
+
+            value:
+              15,
+
+            icon:
+              'Package'
+          } satisfies ItemDefinition);
+
+        return {
+          item,
+          quantity:
+            stack.quantity,
+
+          catalogKnown:
+            Boolean(
+              catalogItem ||
+              persistedItem
+            )
+        };
+      }
+    );
+
+  const getQuantity = (
+    item: ItemDefinition
+  ) =>
+    inventoryStacks
       .filter(
         (stack) =>
-          normalizeInventoryName(stack.name) === target
+          normalizeInventoryName(
+            stack.name
+          ) ===
+          normalizeInventoryName(
+            item.name
+          )
       )
       .reduce(
         (total, stack) =>
-          total + stack.quantity,
+          total +
+          stack.quantity,
         0
       );
-  };
-
-  const ownedCatalogItems =
-    Object.values(ITEMS_CATALOG).filter(
-      (item) => getQuantity(item) > 0
-    );
 
   const equipment = hero.equipment || {};
-
   // Resolve equipped item definitions
   const getEquipped = (slotId?: string) => (slotId ? ITEMS_CATALOG[slotId] : undefined);
   const mainHand = getEquipped(equipment.mainHand);
@@ -144,7 +225,7 @@ export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: Inven
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-3 sm:p-6 animate-fade-in select-none">
-      <div className="relative w-full max-w-4xl bg-zinc-950 border-2 border-amber-900/60 rounded-3xl p-4 sm:p-6 shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-hidden">
+      <div className="relative w-full max-w-4xl bg-zinc-950 border-2 border-amber-900/60 rounded-3xl p-4 sm:p-6 shadow-2xl flex flex-col gap-4 max-h-[92dvh] min-h-0 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
           <div className="flex items-center gap-2">
@@ -171,7 +252,7 @@ export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: Inven
         </div>
 
         {/* Body: Paper Doll (Left) & Grid Inventory (Right) */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 overflow-y-auto flex-1 p-1 scrollbar-thin">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 overflow-y-auto overflow-x-hidden flex-1 min-h-0 p-1 pr-2 scrollbar-thin">
           {/* LEFT: PAPER DOLL (5 cols on md) */}
           <div className="md:col-span-5 bg-gradient-to-b from-zinc-900/90 to-black/80 border border-zinc-800 rounded-2xl p-4 flex flex-col items-center justify-between relative min-h-[380px]">
             <span className="text-xs uppercase tracking-widest text-amber-400/80 font-bold mb-2">
@@ -250,9 +331,8 @@ export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: Inven
             </div>
 
             {/* Grid of Available Items */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 overflow-y-auto max-h-[330px] p-1 scrollbar-thin">
-              {ownedCatalogItems.map((item) => {
-                const quantity = getQuantity(item);
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 overflow-y-auto max-h-[42dvh] min-h-0 p-1 scrollbar-thin">
+              {ownedInventoryItems.map(({ item, quantity, catalogKnown }) => {
                 const isEquipped = Object.values(equipment).includes(item.id);
 
                 const rarityBorders: Record<string, string> = {
@@ -305,7 +385,7 @@ export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: Inven
                       {selectedItem.rarity}
                     </span>
                   </div>
-                  <p className="text-xs text-zinc-300 line-clamp-2 mt-0.5">
+                  <p className="text-xs text-zinc-300 whitespace-normal break-words mt-1 leading-relaxed">
                     {selectedItem.description}
                   </p>
                 </div>
@@ -319,7 +399,7 @@ export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: Inven
                       <Heart size={14} />
                       <span>Usar</span>
                     </button>
-                  ) : (
+                  ) : ['arma', 'escudo', 'armadura', 'elmo', 'botas', 'acessorio'].includes(selectedItem.type) ? (
                     <button
                       onClick={() => handleEquip(selectedItem)}
                       className="bg-amber-600 hover:bg-amber-500 text-zinc-950 font-bold text-xs px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 shadow"
@@ -327,6 +407,10 @@ export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: Inven
                       <Check size={14} />
                       <span>Equipar</span>
                     </button>
+                  ) : (
+                    <span className="text-[11px] text-zinc-400 px-2 py-1">
+                      Item guardado na mochila
+                    </span>
                   )}
                   <button
                     onClick={() => setSelectedItem(null)}

@@ -122,6 +122,8 @@ function DndTokens({
   setContextEnemy,
   onSelectToken,
   onTargetEnemy,
+  onTargetHero,
+  onTargetSquare,
   onTalkNpc,
   onInteractPlayer,
   currentHeroX,
@@ -211,8 +213,32 @@ function DndTokens({
                  className="absolute flex items-center justify-center pointer-events-auto"
                  onClick={(e) => {
                    e.stopPropagation();
-                   if (onInteractPlayer && hero.id !== selectedHeroId) onInteractPlayer(hero);
-                   else onSelectToken('hero', hero.id);
+                   if (targetingAction) {
+                     if (
+                       (
+                         targetingAction.targetMode === 'area' ||
+                         targetingAction.targetMode === 'point'
+                       ) &&
+                       onTargetSquare &&
+                       isInRange(hero.x, hero.y)
+                     ) {
+                       onTargetSquare(hero.x, hero.y);
+                     } else if (
+                       (
+                         targetingAction.targetMode === 'ally' ||
+                         targetingAction.targetMode === 'self'
+                       ) &&
+                       onTargetHero
+                     ) {
+                       onTargetHero(hero.id);
+                     } else {
+                       onSelectToken('hero', hero.id);
+                     }
+                   } else if (onInteractPlayer && hero.id !== selectedHeroId) {
+                     onInteractPlayer(hero);
+                   } else {
+                     onSelectToken('hero', hero.id);
+                   }
                  }}>
               <div className="relative w-[85%] h-[85%] max-w-[36px] max-h-[36px] rounded-full flex flex-col items-center justify-center ring-2 ring-red-700 bg-gradient-to-br from-zinc-950 via-red-950 to-black grayscale opacity-80 shadow-lg cursor-pointer">
                 <span className="text-sm select-none drop-shadow">💀</span>
@@ -235,8 +261,32 @@ function DndTokens({
                className="absolute flex items-center justify-center pointer-events-auto group"
                onClick={(e) => {
                  e.stopPropagation();
-                 if (onInteractPlayer && hero.id !== selectedHeroId) onInteractPlayer(hero);
-                 else onSelectToken('hero', hero.id);
+                 if (targetingAction) {
+                     if (
+                       (
+                         targetingAction.targetMode === 'area' ||
+                         targetingAction.targetMode === 'point'
+                       ) &&
+                       onTargetSquare &&
+                       isInRange(hero.x, hero.y)
+                     ) {
+                       onTargetSquare(hero.x, hero.y);
+                     } else if (
+                       (
+                         targetingAction.targetMode === 'ally' ||
+                         targetingAction.targetMode === 'self'
+                       ) &&
+                       onTargetHero
+                     ) {
+                       onTargetHero(hero.id);
+                     } else {
+                       onSelectToken('hero', hero.id);
+                     }
+                   } else if (onInteractPlayer && hero.id !== selectedHeroId) {
+                     onInteractPlayer(hero);
+                   } else {
+                     onSelectToken('hero', hero.id);
+                   }
                }}>
             <div style={recoilStyle} className={`relative w-[85%] h-[85%] max-w-[42px] max-h-[42px] rounded-full flex flex-col items-center justify-center cursor-pointer shadow-[0_4px_10px_rgba(0,0,0,0.6)] transition-transform ${hero.isWalking ? 'token-walking-active scale-110' : 'token-human-sway hover:scale-105'} ${isActiveTurn ? 'ring-4 ring-amber-400 ring-offset-2 ring-offset-black scale-115 shadow-[0_0_25px_rgba(251,191,36,0.9)] token-selected-pulse' : isSelected ? 'ring-2 ring-amber-400 ring-offset-1 ring-offset-black scale-110 token-selected-pulse' : `ring-2 ${ringColor}`} bg-gradient-to-br ${bgGradient} ${statusClasses}`}>
               <div className="absolute inset-[2px] rounded-full border border-white/10 pointer-events-none" />
@@ -293,7 +343,21 @@ function DndTokens({
                  e.stopPropagation();
                  onSelectToken('enemy', enemy.id);
                  setContextEnemy(enemy);
-                 if (isTargeted) {
+
+                 if (
+                   targetingAction &&
+                   (
+                     targetingAction.targetMode === 'area' ||
+                     targetingAction.targetMode === 'point'
+                   ) &&
+                   onTargetSquare &&
+                   isInRange(enemy.x, enemy.y)
+                 ) {
+                   onTargetSquare(
+                     enemy.x,
+                     enemy.y
+                   );
+                 } else if (isTargeted) {
                    onTargetEnemy(enemy.id);
                  } else if (isInRange(enemy.x, enemy.y)) {
                    onTargetEnemy(enemy.id);
@@ -585,6 +649,8 @@ interface TacticalMapProps {
   onMoveHeroPath?: (heroId: string, waypoints: Point[]) => void;
   remoteWalkPath?: { characterId: string; waypoints: Point[]; seq: number } | null;
   onTargetEnemy: (enemyId: string) => void;
+  onTargetHero?: (heroId: string) => void;
+  onTargetSquare?: (x: number, y: number) => void;
   locationName: string;
   locationLabel: string;
   isCombat: boolean;
@@ -601,6 +667,7 @@ interface TacticalMapProps {
   onTalkNpc?: (npcId: string) => void;
   projectiles?: ProjectileVfx[];
   movementUsed?: number;
+  movementBonusSquares?: number;
   biome?: BiomeType;
   onInteractPlayer?: (hero: Character) => void;
   screenShake?: boolean;
@@ -622,6 +689,8 @@ export function TacticalMap({
   onMoveHeroPath,
   remoteWalkPath,
   onTargetEnemy,
+  onTargetHero,
+  onTargetSquare,
   locationName,
   locationLabel,
   isCombat,
@@ -638,6 +707,7 @@ export function TacticalMap({
   onTalkNpc,
   projectiles,
   movementUsed = 0,
+  movementBonusSquares = 0,
   biome = 'village',
   onInteractPlayer,
   screenShake,
@@ -809,9 +879,19 @@ export function TacticalMap({
 
   // Movement budget in combat (D&D 5e: Speed / 1.5m)
   const moveBudget = useMemo(() => {
-    const speed = activeHero?.speed || 9;
-    return calculateMovementBudget(speed, movementUsed);
-  }, [activeHero?.speed, movementUsed]);
+    const speed =
+      (activeHero?.speed || 9) +
+      movementBonusSquares * 1.5;
+
+    return calculateMovementBudget(
+      speed,
+      movementUsed
+    );
+  }, [
+    activeHero?.speed,
+    movementUsed,
+    movementBonusSquares
+  ]);
 
   // Set of occupied tiles (living entities other than active hero)
   const occupiedTiles = useMemo(() => {
@@ -1313,9 +1393,45 @@ export function TacticalMap({
                   onMouseLeave={() => setHoveredSquare(null)}
                   onClick={() => {
                     if (targetingAction) {
-                      const enemyTarget = tileEnemies[0];
-                      if (enemyTarget && inRange) {
-                        onTargetEnemy(enemyTarget.id);
+                      if (
+                        (
+                          targetingAction.targetMode ===
+                            'area' ||
+                          targetingAction.targetMode ===
+                            'point'
+                        ) &&
+                        inRange &&
+                        onTargetSquare
+                      ) {
+                        onTargetSquare(
+                          x,
+                          y
+                        );
+                      } else if (
+                        (
+                          targetingAction.targetMode ===
+                            'ally' ||
+                          targetingAction.targetMode ===
+                            'self'
+                        ) &&
+                        tileHeroes.length > 0 &&
+                        onTargetHero
+                      ) {
+                        onTargetHero(
+                          tileHeroes[0].id
+                        );
+                      } else {
+                        const enemyTarget =
+                          tileEnemies[0];
+
+                        if (
+                          enemyTarget &&
+                          inRange
+                        ) {
+                          onTargetEnemy(
+                            enemyTarget.id
+                          );
+                        }
                       }
                     } else if (tileNpcs.length > 0) {
                       const npc = tileNpcs[0];
@@ -1441,6 +1557,8 @@ export function TacticalMap({
               setContextEnemy={setContextEnemy}
               onSelectToken={onSelectToken}
               onTargetEnemy={onTargetEnemy}
+              onTargetHero={onTargetHero}
+              onTargetSquare={onTargetSquare}
               onTalkNpc={onTalkNpc}
               onInteractPlayer={onInteractPlayer}
               currentHeroX={currentHeroX}

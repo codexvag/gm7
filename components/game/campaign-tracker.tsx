@@ -115,45 +115,71 @@ export function CampaignTracker({
 
   // Determine current campaign step dynamically based on individual hero or party progression
   const currentStepIndex = React.useMemo(() => {
-    if (!state) return 0;
-    const qp = activeHero?.questProgress || state.questProgress || {};
-    const biome = activeHero?.biome || state.biome || 'village';
-    const loc = activeHero?.location ?? state.location ?? 0;
-    const hasEnemiesAlive = state.enemies && state.enemies.some((e) => e.hp > 0 && (!e.ownerCharId || e.ownerCharId === activeHero?.id));
+    if (!state) {
+      return 0;
+    }
 
-    // 1. Defeated Malakor -> Step 6 (index 5)
-    if (qp.malakor_defeated) return 5;
+    /*
+     * Only authoritative campaign proof advances the guide.
+     * biome/location are intentionally NOT read here.
+     */
+    const proof =
+      activeHero?.campaignProof ||
+      {};
 
-    // 2. In dungeon or entered dungeon -> Step 6 (index 5: Confrontar Malakor)
-    if (qp.dungeon_entered || biome === 'dungeon' || loc === 2) {
+    if (
+      proof.ignisrax_defeated
+    ) {
+      return 8;
+    }
+
+    if (
+      proof.canyon_cleared
+    ) {
+      return 7;
+    }
+
+    if (
+      proof.malakor_defeated
+    ) {
+      return 6;
+    }
+
+    if (
+      proof.ruins_cleared
+    ) {
       return 5;
     }
 
-    // 3. Defeated forest enemies / cleared forest -> Step 5 (index 4: Descer à Masmorra)
-    if (qp.forest_cleared) {
+    if (
+      proof.forest_cleared
+    ) {
       return 4;
     }
 
-    // 4. In forest: if enemies are alive -> Step 4 (index 3: Neutralizar Patrulha)
-    if (biome === 'forest' || loc === 1) {
-      if (hasEnemiesAlive) return 3;
-      return 4;
+    if (
+      proof.kaelen_talked
+    ) {
+      return 3;
     }
 
-    // 5. In Village: check NPC interaction flags
-    if (qp.kaelen_talked) {
-      return 3; // Step 4: Marche para a Floresta
-    }
-    if (qp.elenor_talked) {
-      return 2; // Step 3: Falar com Capitão Kaelen
-    }
-    if (qp.doran_talked) {
-      return 1; // Step 2: Provisões da Alquimista Elenor
+    if (
+      proof.elenor_talked
+    ) {
+      return 2;
     }
 
-    // Default: Step 1 (index 0: O Chamado do Ancião Doran)
+    if (
+      proof.doran_talked
+    ) {
+      return 1;
+    }
+
     return 0;
-  }, [state, activeHero]);
+  }, [
+    state,
+    activeHero
+  ]);
 
   const currentStep = CAMPAIGN_STEPS[currentStepIndex] || CAMPAIGN_STEPS[0];
   const progressPercent = Math.round(((currentStepIndex + 1) / CAMPAIGN_STEPS.length) * 100);
@@ -278,7 +304,7 @@ export function CampaignTracker({
       {/* ═══ CAMPAIGN PRESENTATION & PROLOGUE BRIEFING MODAL ═══ */}
       {showBriefingModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-3 sm:p-6 animate-fade-in select-none">
-          <div className="relative w-full max-w-2xl bg-gradient-to-b from-[#101712] via-[#0c120e] to-[#070b08] border-2 border-amber-600/80 rounded-3xl p-5 sm:p-7 shadow-[0_0_60px_rgba(0,0,0,0.95)] flex flex-col gap-4 max-h-[90vh] overflow-hidden text-zinc-200">
+          <div className="relative w-full max-w-2xl bg-gradient-to-b from-[#101712] via-[#0c120e] to-[#070b08] border-2 border-amber-600/80 rounded-3xl p-5 sm:p-7 shadow-[0_0_60px_rgba(0,0,0,0.95)] flex flex-col gap-4 max-h-[92dvh] overflow-hidden text-zinc-200">
             {/* Modal Header */}
             <div className="flex items-start justify-between border-b border-amber-900/60 pb-3">
               <div>
