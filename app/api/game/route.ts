@@ -1829,6 +1829,16 @@ export async function POST(req: NextRequest) {
           touchChar(char);
         }
 
+        // If custom enemies are passed (e.g. from Dungeon Crawler room encounter)
+        if (Array.isArray(a.enemies) && a.enemies.length > 0) {
+          s.enemies = a.enemies.map((e: any) => ({
+            ...e,
+            ownerCharId: p.id,
+            partyId: partyId || p.id,
+            biome: heroBiome
+          }));
+        }
+
         // Claim legacy/world enemies for the party that really engages them.
         // Older saves may contain Malakor or other enemies without party scope.
         for (const enemy of (s.enemies || [])) {

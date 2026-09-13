@@ -1151,8 +1151,49 @@ export default function Game() {
       isDragonCombatActive: Boolean(isActBossDefeated && currentAct === 3),
       activeAct: currentAct
     });
-    audioManager.playMusic(recommended);
   }, [state?.combat, state?.enemies, isActBossDefeated, currentAct]);
+
+  // Monitorar fim de combate na Masmorra Procedural (desbloqueio de escadaria e salas limpas)
+  const prevCombatRef = useRef(false);
+  useEffect(() => {
+    const wasCombat = prevCombatRef.current;
+    const isCombat = Boolean(state?.combat);
+    prevCombatRef.current = isCombat;
+
+    if (wasCombat && !isCombat && dungeonFloor && dungeonExpedition) {
+      // Verificar se o chefe da sala foi derrotado
+      const bossRoom = dungeonFloor.rooms.find((r) => r.purpose === 'boss');
+      const bossEnemy = bossRoom?.enemies[0];
+      const bossDefeatedOnServer = bossEnemy
+        ? !(state?.enemies || []).some((e) => e.id === bossEnemy.id && e.hp > 0)
+        : false;
+
+      if (bossRoom && (bossDefeatedOnServer || bossRoom.cleared)) {
+        bossRoom.cleared = true;
+        dungeonFloor.cleared = true;
+        dungeonFloor.stairsDown.isUnlocked = true;
+
+        try { playSfx('level'); } catch {}
+        void narrate(
+          '',
+          `🏆 [Vitória no Andar ${dungeonFloor.floorNumber}] O Guardião do Andar foi Derrotado! A Escadaria das Profundezas foi Aberta!`
+        );
+        setShowExtractionModal(true);
+      } else {
+        for (const room of dungeonFloor.rooms) {
+          if (!room.cleared && room.purpose === 'combat') {
+            const hasAlive = room.enemies.some((re) =>
+              (state?.enemies || []).some((se) => se.id === re.id && se.hp > 0)
+            );
+            if (!hasAlive) {
+              room.cleared = true;
+              void narrate('', `⚔️ ${room.name}: As sentinelas foram derrotadas! Sala segura.`);
+            }
+          }
+        }
+      }
+    }
+  }, [state?.combat, state?.enemies, dungeonFloor, dungeonExpedition]);
 
   // Auto-focus user's active hero or current combat turn entity to eliminate requiring preliminary manual clicks
   useEffect(() => {
@@ -1964,6 +2005,11 @@ export default function Game() {
       return;
     }
 
+    if (type === 'dungeon_entrance') {
+      setShowExpeditionEntryModal(true);
+      return;
+    }
+
     // Comportamento padrão em outras áreas / vila
     if (type === 'chest') {
       void narrate('', `${active.name} abre as caixas de suprimentos nas coordenadas [${String.fromCharCode(65 + x)}${y + 1}] e encontra provisões e poções de cura!`);
@@ -1972,7 +2018,9 @@ export default function Game() {
     } else if (type === 'well') {
       void narrate('', `${active.name} retira água fresca do poço de pedra da vila, recompondo o fôlego.`);
     } else if (type === 'stairs') {
-      if (isActBossDefeated) {
+      if (battlemapBiome === 'dungeon' && !dungeonFloor) {
+        setShowExpeditionEntryModal(true);
+      } else if (isActBossDefeated) {
         void handleAdvanceAct();
       } else {
         void narrate('', `${active.name} aproxima-se da escadaria, mas guardas e selos impedem a passagem enquanto a missão atual não for concluída.`);
@@ -1982,11 +2030,6 @@ export default function Game() {
 
   const handleTravel = async (b: BiomeType) => {
     if (!active) return;
-
-    if (b === 'dungeon' && !dungeonExpedition) {
-      setShowExpeditionEntryModal(true);
-      return;
-    }
 
     const locIdx =
       b === 'village' ? 0
@@ -2015,10 +2058,21 @@ export default function Game() {
     setBattlemapSeed(Date.now());
     setShowExpeditionEntryModal(false);
 
-    await action({ action: 'location', location: 3, biome: 'dungeon', character: active.id });
+    // Mover o herói para o ponto de spawn seguro do Andar 1 (Entrada do Santuário)
+    const spawn = newExp.floorHistory[1].spawnHero;
+    await action({
+      action: 'move',
+      character: active.id,
+      x: spawn.x,
+      y: spawn.y,
+      maxBound: 11,
+      gridSize: 12
+    });
+
+    try { playSfx('door'); } catch {}
     void narrate(
       '',
-      `[Catacumbas dos Três Selos] ${active.name} iniciou uma Expedição no Andar 1 (${expMode === 'solo' ? 'Modo Solo' : 'Modo Grupo'}). Explore as salas, evite armadilhas e derrote o Sentinela Chefe!`
+      `💀 [Catacumbas Profundas] ${active.name} iniciou uma Expedição no Andar 1 (${expMode === 'solo' ? 'Modo Solo' : 'Modo Grupo'}). Explore as salas, evite armadilhas e derrote o Guardião Chefe para destrancar a escadaria!`
     );
   };
 
@@ -2946,6 +3000,33 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                 {/* Right: Biome Selector & Mobile Tab Switcher */}
                 {/* Right: Biome Selector, HUD Toggles & Mobile Tab Switcher */}
                 <div className="flex items-center gap-1.5 shrink-0">
+                  {/* Atalho de Expedição nas Catacumbas */}
+                  {battlemapBiome === 'dungeon' && !dungeonFloor && (
+                    <button
+                      onClick={() => setShowExpeditionEntryModal(true)}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-black font-black text-xs uppercase tracking-wide shadow-[0_0_15px_rgba(245,158,11,0.6)] border border-yellow-200 animate-pulse transition-transform active:scale-95 cursor-pointer"
+                      title="Adentrar as Catacumbas Profundas (Dungeon Crawler)"
+                    >
+                      <span>💀</span>
+                      <span>Expedição Masmorra</span>
+                    </button>
+                  )}
+
+                  {dungeonFloor && dungeonExpedition && (
+                    <div className="flex items-center gap-1.5 bg-amber-950/70 border border-amber-500/60 rounded-xl px-2.5 py-1">
+                      <span className="text-xs font-mono font-bold text-amber-300">
+                        💀 Andar {dungeonFloor.floorNumber} ({dungeonExpedition.mode === 'solo' ? 'Solo' : 'Grupo'})
+                      </span>
+                      <button
+                        onClick={() => setShowExtractionModal(true)}
+                        className="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-black text-[10px] font-black uppercase cursor-pointer"
+                        title="Abrir opções de extração ou descida"
+                      >
+                        Extrair / Descer
+                      </button>
+                    </div>
+                  )}
+
                   {/* Biome Selector: Os 6 Mapas de Valdoria */}
                   <div className="hidden lg:flex items-center gap-0.5 bg-zinc-900 border border-[#384333]/80 rounded-xl p-0.5 text-[10px] font-bold">
                     {(
@@ -3270,7 +3351,8 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                         if (encounter.shouldTriggerCombat && !state?.combat) {
                           void action({
                             action: 'startCombat',
-                            character: heroId
+                            character: heroId,
+                            enemies: encounter.enemiesToFight
                           });
                           void narrate('', `⚔️ ${encounter.room?.name || 'Câmara das Catacumbas'}: Inimigos à espreita atacam! Iniciando combate tático 5e!`);
                         }
@@ -3343,6 +3425,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                     canMove={Boolean(canEdit && (!state?.combat || isHeroTurn))}
                     dungeon={proceduralDungeon}
                     battlemap={organicBattlemap}
+                    dungeonFloor={dungeonFloor}
                     onInteractObject={handleInteractObject}
                     busy={busy}
                     activeTurnId={state?.combat ? turnId : undefined}

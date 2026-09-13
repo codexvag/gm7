@@ -77,11 +77,27 @@ export interface DungeonCrawlerRoom {
   enemies: Enemy[];
 }
 
+export type DungeonTileType = 'wall' | 'floor' | 'door' | 'chest' | 'shrine' | 'trap' | 'stairs' | 'extraction';
+
+export interface DungeonCrawlerTile {
+  x: number;
+  y: number;
+  type: DungeonTileType;
+  roomId?: string;
+  roomPurpose?: RoomPurpose;
+  door?: DungeonDoor;
+  chest?: DungeonChest;
+  shrine?: DungeonShrine;
+  trap?: DungeonTrap;
+  revealed?: boolean;
+}
+
 export interface DungeonFloor {
   floorNumber: number;
   seed: number;
   width: number;
   height: number;
+  tiles: DungeonCrawlerTile[][];
   rooms: DungeonCrawlerRoom[];
   spawnHero: Point;
   stairsDown: Point & { isUnlocked: boolean };
@@ -406,11 +422,154 @@ export function generateDungeonFloor(
   const stairsDown = { x: 10, y: 7, isUnlocked: false };
   const extractionPoint = { x: 1, y: 2 }; // No vestíbulo inicial
 
+  // Montar matriz 2D de tiles da masmorra
+  const tiles: DungeonCrawlerTile[][] = [];
+  for (let y = 0; y < gridSize; y++) {
+    const row: DungeonCrawlerTile[] = [];
+    for (let x = 0; x < gridSize; x++) {
+      row.push({ x, y, type: 'wall', revealed: false });
+    }
+    tiles.push(row);
+  }
+
+  // 1. Esculpir o chão das salas
+  for (const room of rooms) {
+    for (let y = room.y; y < room.y + room.height; y++) {
+      for (let x = room.x; x < room.x + room.width; x++) {
+        if (x < gridSize && y < gridSize) {
+          tiles[y][x] = {
+            x,
+            y,
+            type: 'floor',
+            roomId: room.id,
+            roomPurpose: room.purpose,
+            revealed: room.revealed
+          };
+        }
+      }
+    }
+  }
+
+  // 2. Esculpir corredores de conexão entre salas
+  const corridorCoords: [number, number][] = [
+    // Corredor horizontal entre Sala 1 (Entrada) e Sala 2 (Combate)
+    [5, 2],
+    // Corredor vertical entre Sala 1 e Sala 3 (Segredo)
+    [2, 5],
+    // Corredor vertical entre Sala 2 e Sala 4 (Chefe)
+    [8, 5],
+    // Pátio central / encruzilhada de ligação
+    [5, 3],
+    [5, 4],
+    [5, 5],
+    [5, 6],
+    [5, 7],
+    [3, 5],
+    [4, 5],
+    [6, 5],
+    [7, 5]
+  ];
+
+  for (const [cx, cy] of corridorCoords) {
+    if (cx < gridSize && cy < gridSize) {
+      tiles[cy][cx] = {
+        x: cx,
+        y: cy,
+        type: 'floor',
+        revealed: true
+      };
+    }
+  }
+
+  // 3. Posicionar Portas
+  for (const room of rooms) {
+    for (const door of room.doors) {
+      if (door.x < gridSize && door.y < gridSize) {
+        tiles[door.y][door.x] = {
+          x: door.x,
+          y: door.y,
+          type: 'door',
+          door,
+          roomId: room.id,
+          roomPurpose: room.purpose,
+          revealed: !door.isSecret || door.isOpen
+        };
+      }
+    }
+  }
+
+  // 4. Posicionar Baús
+  for (const room of rooms) {
+    for (const chest of room.chests) {
+      if (chest.x < gridSize && chest.y < gridSize) {
+        tiles[chest.y][chest.x] = {
+          x: chest.x,
+          y: chest.y,
+          type: 'chest',
+          chest,
+          roomId: room.id,
+          roomPurpose: room.purpose,
+          revealed: room.revealed
+        };
+      }
+    }
+  }
+
+  // 5. Posicionar Santuários
+  for (const room of rooms) {
+    for (const shrine of room.shrines) {
+      if (shrine.x < gridSize && shrine.y < gridSize) {
+        tiles[shrine.y][shrine.x] = {
+          x: shrine.x,
+          y: shrine.y,
+          type: 'shrine',
+          shrine,
+          roomId: room.id,
+          roomPurpose: room.purpose,
+          revealed: room.revealed
+        };
+      }
+    }
+  }
+
+  // 6. Posicionar Armadilhas
+  for (const room of rooms) {
+    for (const trap of room.traps) {
+      if (trap.x < gridSize && trap.y < gridSize) {
+        tiles[trap.y][trap.x] = {
+          x: trap.x,
+          y: trap.y,
+          type: 'trap',
+          trap,
+          roomId: room.id,
+          roomPurpose: room.purpose,
+          revealed: trap.isRevealed
+        };
+      }
+    }
+  }
+
+  // 7. Ponto de Extração e Escadaria para baixo
+  tiles[extractionPoint.y][extractionPoint.x] = {
+    x: extractionPoint.x,
+    y: extractionPoint.y,
+    type: 'extraction',
+    revealed: true
+  };
+
+  tiles[stairsDown.y][stairsDown.x] = {
+    x: stairsDown.x,
+    y: stairsDown.y,
+    type: 'stairs',
+    revealed: true
+  };
+
   return {
     floorNumber,
     seed: floorSeed,
     width: gridSize,
     height: gridSize,
+    tiles,
     rooms,
     spawnHero,
     stairsDown,
@@ -649,7 +808,19 @@ export function checkRoomCombatEncounter(
 export function getDungeonObstacleCoordinates(floor: DungeonFloor): Set<string> {
   const blocked = new Set<string>();
 
-  // Portas fechadas bloqueiam passagem
+  // 1. Todas as paredes são intransponíveis
+  if (floor.tiles) {
+    for (let y = 0; y < floor.height; y++) {
+      for (let x = 0; x < floor.width; x++) {
+        const tile = floor.tiles[y]?.[x];
+        if (tile && tile.type === 'wall') {
+          blocked.add(`${x},${y}`);
+        }
+      }
+    }
+  }
+
+  // 2. Portas fechadas bloqueiam passagem
   for (const room of floor.rooms) {
     for (const door of room.doors) {
       if (!door.isOpen) {
@@ -660,3 +831,125 @@ export function getDungeonObstacleCoordinates(floor: DungeonFloor): Set<string> 
 
   return blocked;
 }
+
+/**
+ * Destranca a escadaria do andar após a derrota do chefe
+ */
+export function unlockFloorStairs(floor: DungeonFloor): void {
+  floor.cleared = true;
+  floor.stairsDown.isUnlocked = true;
+  const tile = floor.tiles?.[floor.stairsDown.y]?.[floor.stairsDown.x];
+  if (tile) {
+    tile.revealed = true;
+  }
+}
+
+/**
+ * Pathfinding A* exato para o grid da Masmorra respeitando salas, paredes e portas
+ */
+export function findDungeonPathAStar(
+  start: Point,
+  goal: Point,
+  floor: DungeonFloor,
+  occupiedTiles: Set<string> = new Set()
+): Point[] {
+  if (start.x === goal.x && start.y === goal.y) return [start];
+
+  const obstacles = getDungeonObstacleCoordinates(floor);
+
+  // Se o destino for parede sólida, impossível caminhar até lá
+  const goalTile = floor.tiles?.[goal.y]?.[goal.x];
+  if (goalTile && goalTile.type === 'wall') {
+    return [];
+  }
+
+  // Se o destino estiver ocupado por outro personagem/inimigo vivo
+  if (occupiedTiles.has(`${goal.x},${goal.y}`)) {
+    return [];
+  }
+
+  interface PathNode {
+    x: number;
+    y: number;
+    g: number;
+    h: number;
+    f: number;
+    parent: PathNode | null;
+  }
+
+  const openList: PathNode[] = [];
+  const closedSet = new Set<string>();
+
+  const heuristic = (x: number, y: number) => Math.abs(x - goal.x) + Math.abs(y - goal.y);
+
+  openList.push({
+    x: start.x,
+    y: start.y,
+    g: 0,
+    h: heuristic(start.x, start.y),
+    f: heuristic(start.x, start.y),
+    parent: null
+  });
+
+  const directions = [
+    { dx: 0, dy: -1 },
+    { dx: 0, dy: 1 },
+    { dx: -1, dy: 0 },
+    { dx: 1, dy: 0 }
+  ];
+
+  while (openList.length > 0) {
+    openList.sort((a, b) => a.f - b.f);
+    const current = openList.shift()!;
+    const key = `${current.x},${current.y}`;
+
+    if (current.x === goal.x && current.y === goal.y) {
+      const path: Point[] = [];
+      let curr: PathNode | null = current;
+      while (curr) {
+        path.unshift({ x: curr.x, y: curr.y });
+        curr = curr.parent;
+      }
+      return path;
+    }
+
+    closedSet.add(key);
+
+    for (const dir of directions) {
+      const nx = current.x + dir.dx;
+      const ny = current.y + dir.dy;
+      const nKey = `${nx},${ny}`;
+
+      if (nx < 0 || nx >= floor.width || ny < 0 || ny >= floor.height) continue;
+      if (closedSet.has(nKey)) continue;
+
+      // Paredes e portas fechadas bloqueiam o caminho (a não ser que o goal seja uma porta para abrir)
+      if (obstacles.has(nKey) && !(nx === goal.x && ny === goal.y)) {
+        continue;
+      }
+
+      if (occupiedTiles.has(nKey) && !(nx === goal.x && ny === goal.y)) {
+        continue;
+      }
+
+      const g = current.g + 1;
+      const h = heuristic(nx, ny);
+      const f = g + h;
+
+      const existing = openList.find((n) => n.x === nx && n.y === ny);
+      if (existing) {
+        if (g < existing.g) {
+          existing.g = g;
+          existing.f = f;
+          existing.parent = current;
+        }
+      } else {
+        openList.push({ x: nx, y: ny, g, h, f, parent: current });
+      }
+    }
+  }
+
+  return [];
+}
+
+

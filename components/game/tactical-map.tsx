@@ -539,6 +539,7 @@ import { playSfx } from '@/lib/sound-effects';
 import type { ActionSelection } from './bottom-player-hud';
 import type { ProceduralDungeon, TileType } from '@/lib/dungeon-generator';
 import type { Battlemap, OrganicTileType, BiomeType } from '@/lib/battlemap-biomes';
+import { type DungeonFloor, type DungeonCrawlerTile, findDungeonPathAStar } from '@/lib/dungeon-crawler';
 import {
   MAP_COLLISION_PROFILES,
   isGridTileWalkable,
@@ -657,6 +658,7 @@ interface TacticalMapProps {
   canMove: boolean;
   dungeon?: ProceduralDungeon;
   battlemap?: Battlemap;
+  dungeonFloor?: DungeonFloor | null;
   onInteractObject?: (type: string, x: number, y: number) => void;
   busy?: boolean;
   activeTurnId?: string;
@@ -697,6 +699,7 @@ export function TacticalMap({
   canMove,
   dungeon,
   battlemap,
+  dungeonFloor,
   onInteractObject,
   busy,
   activeTurnId,
@@ -806,7 +809,7 @@ export function TacticalMap({
       : 'village');
 
   const collisionProfile = MAP_COLLISION_PROFILES[currentBiome] || MAP_COLLISION_PROFILES.village;
-  const gridSize = customGridSize || collisionProfile.gridSize || (battlemap ? battlemap.width : dungeon ? dungeon.width : 8);
+  const gridSize = dungeonFloor ? dungeonFloor.width : customGridSize || collisionProfile.gridSize || (battlemap ? battlemap.width : dungeon ? dungeon.width : 8);
   const activeHero = characters.find((c) => c.id === selectedHeroId) || characters[0];
 
   const [debugCollisions, setDebugCollisions] = useState(false);
@@ -1025,6 +1028,14 @@ export function TacticalMap({
   const activePath = useMemo(() => {
     if (!hoveredSquare || !activeHero || targetingAction) return [];
     if (currentHeroX === hoveredSquare.x && currentHeroY === hoveredSquare.y) return [];
+    if (dungeonFloor) {
+      return findDungeonPathAStar(
+        { x: currentHeroX, y: currentHeroY },
+        hoveredSquare,
+        dungeonFloor,
+        occupiedTiles
+      );
+    }
     return findPathAStar(
       { x: currentHeroX, y: currentHeroY },
       hoveredSquare,
@@ -1033,7 +1044,7 @@ export function TacticalMap({
       occupiedTiles,
       activeZones
     );
-  }, [activeHero, currentHeroX, currentHeroY, hoveredSquare, targetingAction, currentBiome, gridSize, occupiedTiles, activeZones]);
+  }, [activeHero, currentHeroX, currentHeroY, hoveredSquare, targetingAction, dungeonFloor, currentBiome, gridSize, occupiedTiles, activeZones]);
 
   const pathStepCount = activePath.length > 0 ? activePath.length - 1 : 0;
   const pathMeters = (pathStepCount * 1.5).toFixed(1);
@@ -1055,8 +1066,34 @@ export function TacticalMap({
     return dist <= targetingAction.rangeSquares;
   };
 
-  // Helper to determine tile type
+  // Helper to determine tile type and walkability
+  const isTileWalkable = (x: number, y: number): boolean => {
+    if (dungeonFloor) {
+      if (x < 0 || x >= dungeonFloor.width || y < 0 || y >= dungeonFloor.height) return false;
+      const t = dungeonFloor.tiles?.[y]?.[x];
+      if (!t) return false;
+      if (t.type === 'wall') return false;
+      if (t.type === 'door') {
+        const door = t.door;
+        if (door?.isSecret && !door.isOpen) return false;
+        if (!door?.isOpen) return false;
+      }
+      return true;
+    }
+    return isGridTileWalkable(currentBiome, x, y, gridSize, activeZones);
+  };
+
   const getTileInfo = (x: number, y: number) => {
+    if (dungeonFloor && dungeonFloor.tiles?.[y]?.[x]) {
+      const dt = dungeonFloor.tiles[y][x];
+      const isDoorBlocked = dt.type === 'door' && (!dt.door?.isOpen || (dt.door?.isSecret && !dt.door?.isOpen));
+      return {
+        type: dt.type as string,
+        blocksMovement: dt.type === 'wall' || isDoorBlocked,
+        blocksSight: dt.type === 'wall' || isDoorBlocked,
+        label: dt.door?.name || dt.chest?.name || dt.shrine?.name || undefined
+      };
+    }
     if (battlemap && battlemap.tiles[y]?.[x]) {
       const t = battlemap.tiles[y][x];
       return {
@@ -1222,11 +1259,49 @@ export function TacticalMap({
             className="relative w-full max-w-6xl aspect-[16/9] mx-auto touch-manipulation pointer-events-auto select-none rounded-2xl overflow-hidden shadow-2xl border border-stone-800/80"
           >
             {/* 1. Base Illustrated Map Artwork */}
-            <img
-              src={collisionProfile.imageSrc}
-              alt="Mapa Ilustrado"
-              className="absolute inset-0 w-full h-full object-fill select-none pointer-events-none z-0"
-            />
+            {dungeonFloor ? (
+              <div className="absolute inset-0 w-full h-full bg-[#050806] select-none pointer-events-none z-0 overflow-hidden">
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: `repeat(${dungeonFloor.width}, minmax(0, 1fr))`,
+                    gridTemplateRows: `repeat(${dungeonFloor.height}, minmax(0, 1fr))`
+                  }}
+                  className="w-full h-full"
+                >
+                  {dungeonFloor.tiles.flatMap((row, ry) =>
+                    row.map((cell, rx) => {
+                      const isWall = cell.type === 'wall';
+                      let bgClass = 'bg-[#0a0f0d] border border-stone-800/30';
+                      if (isWall) {
+                        bgClass = 'bg-gradient-to-b from-[#18201a] via-[#101612] to-[#070b09] border border-[#232c25] shadow-inner';
+                      } else if (cell.roomPurpose === 'shrine') {
+                        bgClass = 'bg-[#071813] border border-emerald-800/25';
+                      } else if (cell.roomPurpose === 'combat') {
+                        bgClass = 'bg-[#15110d] border border-amber-900/25';
+                      } else if (cell.roomPurpose === 'secret' || cell.roomPurpose === 'treasure') {
+                        bgClass = 'bg-[#120b1c] border border-purple-900/25';
+                      } else if (cell.roomPurpose === 'boss') {
+                        bgClass = 'bg-[#1d0808] border border-red-900/30';
+                      }
+                      return (
+                        <div key={`${rx}-${ry}`} className={`relative w-full h-full ${bgClass}`}>
+                          {isWall && (
+                            <div className="absolute inset-0.5 border-t border-l border-white/10 rounded-xs" />
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            ) : (
+              <img
+                src={collisionProfile.imageSrc}
+                alt="Mapa Ilustrado"
+                className="absolute inset-0 w-full h-full object-fill select-none pointer-events-none z-0"
+              />
+            )}
 
             {/* 2. Ambient Lighting & Atmospheric Fantasy Vignette */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-black/35 pointer-events-none z-[1]" />
@@ -1366,7 +1441,7 @@ export function TacticalMap({
               const tile = getTileInfo(x, y);
               const tType = tile.type;
 
-              const isWalkable = isGridTileWalkable(currentBiome, x, y, gridSize, activeZones);
+              const isWalkable = isTileWalkable(x, y);
               const isOnActivePath = activePath.some((p) => p.x === x && p.y === y);
 
               // Translucent tactical cell styling over the illustrated map
@@ -1460,7 +1535,7 @@ export function TacticalMap({
                         try { playSfx('door'); } catch {}
                         onNavigatePortal(pObj.targetBiome, pObj.targetLocationIndex);
                       }
-                    } else if (['chest', 'shrine', 'stairs', 'well'].includes(tType)) {
+                    } else if (['chest', 'shrine', 'stairs', 'well', 'door', 'trap', 'extraction', 'dungeon_entrance'].includes(tType)) {
                       onInteractObject?.(tType, x, y);
                     } else if (canMove && activeHero && !hasEntities) {
                       if (isWalkable) {
@@ -1496,6 +1571,142 @@ export function TacticalMap({
                       : tileBg
                   }`}
                 >
+                {/* ═══ INTERACTIVE OBJECTS FOR DUNGEON CRAWLER FLOOR ═══ */}
+                {dungeonFloor && tType === 'door' && (
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onInteractObject?.('door', x, y);
+                    }}
+                    className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer pointer-events-auto z-15"
+                    title={tile.label || 'Porta'}
+                  >
+                    {dungeonFloor.tiles?.[y]?.[x]?.door?.isOpen ? (
+                      <div className="w-full h-full flex items-center justify-center opacity-60 bg-emerald-950/20 border border-emerald-500/30 rounded">
+                        <span className="text-xs">🚪</span>
+                      </div>
+                    ) : dungeonFloor.tiles?.[y]?.[x]?.door?.isSecret ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-purple-950/80 border-2 border-purple-500 rounded shadow-[0_0_15px_rgba(168,85,247,0.7)] animate-pulse">
+                        <span className="text-xs">👁️</span>
+                        <span className="text-[7px] text-purple-200 font-bold">Passagem</span>
+                      </div>
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-amber-950 via-stone-900 to-amber-950 border-2 border-amber-600/80 rounded shadow-md group hover:border-amber-400">
+                        <span className="text-xs">🚪</span>
+                        <span className="text-[7px] text-amber-300 font-bold">Abrir</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {dungeonFloor && tType === 'chest' && (
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onInteractObject?.('chest', x, y);
+                    }}
+                    className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer pointer-events-auto z-15 group"
+                    title={tile.label || 'Baú Rúnico'}
+                  >
+                    {dungeonFloor.tiles?.[y]?.[x]?.chest?.isOpened ? (
+                      <div className="w-full h-full flex items-center justify-center opacity-40">
+                        <span className="text-sm">📦</span>
+                      </div>
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-amber-950/60 border border-amber-400/80 rounded shadow-[0_0_15px_rgba(245,158,11,0.6)] animate-pulse group-hover:scale-110 transition-transform">
+                        <span className="text-sm">🪙</span>
+                        <span className="text-[7px] text-amber-300 font-bold">Baú</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {dungeonFloor && tType === 'shrine' && (
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onInteractObject?.('shrine', x, y);
+                    }}
+                    className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer pointer-events-auto z-15 group"
+                    title={tile.label || 'Fonte Sagrada'}
+                  >
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-emerald-950/60 border border-emerald-400/80 rounded shadow-[0_0_18px_rgba(16,185,129,0.7)] animate-pulse group-hover:scale-110 transition-transform">
+                      <span className="text-sm">🌿</span>
+                      <span className="text-[7px] text-emerald-300 font-bold">Fonte</span>
+                    </div>
+                  </div>
+                )}
+
+                {dungeonFloor && tType === 'trap' && (dungeonFloor.tiles?.[y]?.[x]?.trap?.isRevealed || dungeonFloor.tiles?.[y]?.[x]?.trap?.isTriggered) && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-15">
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-red-950/60 border border-red-500/80 rounded shadow-[0_0_15px_rgba(239,68,68,0.7)] animate-pulse">
+                      <span className="text-xs">⚡</span>
+                      <span className="text-[7px] text-red-300 font-mono font-bold">Glifo</span>
+                    </div>
+                  </div>
+                )}
+
+                {dungeonFloor && tType === 'stairs' && (
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onInteractObject?.('stairs', x, y);
+                    }}
+                    className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer pointer-events-auto z-20 group"
+                    title={dungeonFloor.stairsDown.isUnlocked ? 'Descer para o Próximo Andar' : 'Escadaria Selada (Vença o Chefe)'}
+                  >
+                    {dungeonFloor.stairsDown.isUnlocked ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-t from-amber-500/40 via-yellow-500/20 to-transparent border-2 border-amber-300 rounded shadow-[0_0_25px_rgba(245,158,11,0.9)] animate-bounce group-hover:scale-110 transition-transform">
+                        <span className="text-base">✨</span>
+                        <span className="text-[7px] text-amber-200 font-bold whitespace-nowrap bg-black/80 px-1 rounded border border-amber-400">
+                          Andar {dungeonFloor.floorNumber + 1}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-950/80 border border-red-500/70 rounded opacity-80">
+                        <span className="text-xs">🔒</span>
+                        <span className="text-[7px] text-red-300 font-bold">Selada</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {dungeonFloor && tType === 'extraction' && (
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onInteractObject?.('extraction', x, y);
+                    }}
+                    className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer pointer-events-auto z-20 group"
+                    title="Ponto de Extração (Salvar Loot e Retornar)"
+                  >
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-emerald-950/40 border border-emerald-400/80 rounded shadow-[0_0_20px_rgba(16,185,129,0.8)] animate-pulse group-hover:scale-110 transition-transform">
+                      <span className="text-sm">🛡️</span>
+                      <span className="text-[7px] text-emerald-200 font-bold whitespace-nowrap bg-black/80 px-1 rounded border border-emerald-400">
+                        Extrair
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* ═══ DESCIDA PARA AS CATACUMBAS PROFUNDAS NO MAPA BASE ═══ */}
+                {!dungeonFloor && currentBiome === 'dungeon' && x === 6 && y === 6 && (
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onInteractObject?.('dungeon_entrance', 6, 6);
+                    }}
+                    className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer pointer-events-auto group z-25"
+                    title="Adentrar as Catacumbas Profundas (Dungeon Crawler)"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-600/70 via-zinc-900 to-black border-2 border-amber-400 flex items-center justify-center text-lg shadow-[0_0_25px_rgba(245,158,11,0.9)] animate-bounce group-hover:scale-125 transition-transform">
+                      <span>💀</span>
+                    </div>
+                    <div className="absolute -bottom-5 bg-zinc-950/95 border border-amber-400 text-amber-300 font-serif text-[8px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap shadow-xl">
+                      Descida: Masmorra Sem Fim
+                    </div>
+                  </div>
+                )}
                 {/* Physical Adventure Portals rendered cleanly on the map */}
                 {illuminated && activePortals.filter((p) => p.x === x && p.y === y).map((portal, pIdx) => (
                   <div
