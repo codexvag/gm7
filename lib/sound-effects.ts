@@ -5,6 +5,8 @@
  * on external mp3 files that may fail or introduce latency.
  */
 
+import { audioManager } from './audio-manager';
+
 let audioCtx: AudioContext | null = null;
 
 function getAudioContext(): AudioContext | null {
@@ -38,12 +40,16 @@ export type SfxType =
 
 export function playSfx(type: SfxType, volume = 0.35): void {
   try {
+    const effectiveMult = audioManager ? audioManager.getEffectiveSfxVolume() : 1.0;
+    const finalVolume = volume * effectiveMult;
+    if (finalVolume <= 0.001) return;
+
     const ctx = getAudioContext();
     if (!ctx) return;
 
     const now = ctx.currentTime;
     const masterGain = ctx.createGain();
-    masterGain.gain.setValueAtTime(volume, now);
+    masterGain.gain.setValueAtTime(finalVolume, now);
     masterGain.connect(ctx.destination);
 
     switch (type) {

@@ -94,6 +94,19 @@ import { LevelUpModal } from '@/components/game/level-up-modal';
 import { MICRO_ADVENTURES } from '@/lib/micro-adventures';
 import { spawnDragonBoss, getDragonCombatPhase, executeDragonBreath } from '@/lib/dragon-encounter';
 import { playSfx } from '@/lib/sound-effects';
+import { audioManager, computeRecommendedTrack } from '@/lib/audio-manager';
+import { GameSettingsModal } from '@/components/game/game-settings-modal';
+import { MapEditorModal } from '@/components/game/map-editor-modal';
+import {
+  createDungeonExpedition,
+  generateDungeonFloor,
+  interactDungeonObject,
+  checkRoomDiscovery,
+  checkRoomCombatEncounter,
+  getDungeonObstacleCoordinates,
+  type DungeonExpeditionState,
+  type DungeonFloor
+} from '@/lib/dungeon-crawler';
 
 type ApiData = {
   error: string;
@@ -274,6 +287,14 @@ export default function Game() {
   const [organicBattlemap, setOrganicBattlemap] = useState<Battlemap>(() =>
     generateBattlemap('village', 12, 12345)
   );
+
+  // Estados de Configurações, Editor de Mapas e Dungeon Crawler
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isMapEditorOpen, setIsMapEditorOpen] = useState(false);
+  const [dungeonExpedition, setDungeonExpedition] = useState<DungeonExpeditionState | null>(null);
+  const [dungeonFloor, setDungeonFloor] = useState<DungeonFloor | null>(null);
+  const [showExtractionModal, setShowExtractionModal] = useState(false);
+  const [showExpeditionEntryModal, setShowExpeditionEntryModal] = useState(false);
 
   // Trigger tactile token impact recoil
   const triggerRecoil = useCallback((
@@ -1121,6 +1142,18 @@ export default function Game() {
     }
   }, [active?.act, room?.state?.act, currentAct]);
 
+  // Background Music Controller: Toca em loop a faixa correspondente (cidades, batalha_media, batalha_alta)
+  useEffect(() => {
+    const isCombat = Boolean(state?.combat);
+    const recommended = computeRecommendedTrack({
+      combat: isCombat,
+      enemies: state?.enemies,
+      isDragonCombatActive: Boolean(isActBossDefeated && currentAct === 3),
+      activeAct: currentAct
+    });
+    audioManager.playMusic(recommended);
+  }, [state?.combat, state?.enemies, isActBossDefeated, currentAct]);
+
   // Auto-focus user's active hero or current combat turn entity to eliminate requiring preliminary manual clicks
   useEffect(() => {
     if (!state) return;
@@ -1870,6 +1903,68 @@ export default function Game() {
 
   const handleInteractObject = (type: string, x: number, y: number) => {
     if (!active) return;
+
+    // Se estiver em uma expedição nas Catacumbas com andar ativo
+    if (battlemapBiome === 'dungeon' && dungeonFloor) {
+      const result = interactDungeonObject(dungeonFloor, x, y, active);
+      if (result.type === 'stairs' || result.type === 'extraction') {
+        setShowExtractionModal(true);
+        try { playSfx('door'); } catch {}
+        void narrate('', result.message);
+        return;
+      }
+
+      if (result.type === 'chest' && result.success) {
+        try { playSfx('loot'); } catch {}
+        const curGrid = dungeonSize;
+        const posX = ((x + 0.5) / curGrid) * 100;
+        const posY = ((y + 0.5) / curGrid) * 100;
+        const floatText = result.goldFound ? `+${result.goldFound} PO 🪙` : 'Baú Saqueado!';
+        setFloatingTexts((prev) => [...prev, { id: crypto.randomUUID(), x: posX, y: posY, text: floatText, type: 'loot' }]);
+
+        if (dungeonExpedition && result.goldFound) {
+          dungeonExpedition.accumulatedLoot.gold += result.goldFound;
+          if (result.itemsFound) {
+            dungeonExpedition.accumulatedLoot.items.push(...result.itemsFound);
+          }
+        }
+        void narrate('', result.message);
+        return;
+      }
+
+      if (result.type === 'shrine' && result.success) {
+        try { playSfx('heal'); } catch {}
+        const curGrid = dungeonSize;
+        const posX = ((x + 0.5) / curGrid) * 100;
+        const posY = ((y + 0.5) / curGrid) * 100;
+        setFloatingTexts((prev) => [...prev, { id: crypto.randomUUID(), x: posX, y: posY, text: `+${result.hpRestored || 10} PV 🌿`, type: 'heal' }]);
+        void narrate('', result.message);
+        return;
+      }
+
+      if (result.type === 'door') {
+        try { playSfx('door'); } catch {}
+        void narrate('', result.message);
+        return;
+      }
+
+      if (result.type === 'trap') {
+        if (result.trapTriggered) {
+          try { playSfx('hit'); } catch {}
+          triggerRecoil(active.id, null, null, 'hit');
+          void narrate('', result.message);
+        } else {
+          try { playSfx('click'); } catch {}
+          void narrate('', result.message);
+        }
+        return;
+      }
+
+      void narrate('', result.message);
+      return;
+    }
+
+    // Comportamento padrão em outras áreas / vila
     if (type === 'chest') {
       void narrate('', `${active.name} abre as caixas de suprimentos nas coordenadas [${String.fromCharCode(65 + x)}${y + 1}] e encontra provisões e poções de cura!`);
     } else if (type === 'shrine') {
@@ -1887,6 +1982,12 @@ export default function Game() {
 
   const handleTravel = async (b: BiomeType) => {
     if (!active) return;
+
+    if (b === 'dungeon' && !dungeonExpedition) {
+      setShowExpeditionEntryModal(true);
+      return;
+    }
+
     const locIdx =
       b === 'village' ? 0
       : b === 'forest' ? 1
@@ -1901,6 +2002,79 @@ export default function Game() {
       setBattlemapSeed(Date.now());
       setCurrentAct(Math.min(3, Math.max(1, locIdx >= 4 ? 3 : locIdx >= 2 ? 2 : 1)) as 1 | 2 | 3);
     }
+  };
+
+  const handleStartExpedition = async (expMode: 'solo' | 'party') => {
+    if (!active) return;
+    const partyIds = expMode === 'party' ? (state?.characters || []).map((c) => c.id) : [active.id];
+    const newExp = createDungeonExpedition(Date.now(), expMode, partyIds);
+    setDungeonExpedition(newExp);
+    setDungeonFloor(newExp.floorHistory[1]);
+    setDungeonSize(12);
+    setBattlemapBiome('dungeon');
+    setBattlemapSeed(Date.now());
+    setShowExpeditionEntryModal(false);
+
+    await action({ action: 'location', location: 3, biome: 'dungeon', character: active.id });
+    void narrate(
+      '',
+      `[Catacumbas dos Três Selos] ${active.name} iniciou uma Expedição no Andar 1 (${expMode === 'solo' ? 'Modo Solo' : 'Modo Grupo'}). Explore as salas, evite armadilhas e derrote o Sentinela Chefe!`
+    );
+  };
+
+  const handleExtractExpedition = async () => {
+    if (!dungeonExpedition || !active) return;
+    const gold = dungeonExpedition.accumulatedLoot.gold;
+    const items = dungeonExpedition.accumulatedLoot.items;
+
+    const currentGold = active.gold || 0;
+    const newGold = currentGold + gold;
+
+    await action({
+      action: 'character',
+      character: active.id,
+      value: { ...active, gold: newGold }
+    });
+
+    try { playSfx('loot'); } catch {}
+    void narrate(
+      '',
+      `🏆 Extração Bem-Sucedida! ${active.name} retornou à Vila com +${gold} PO e ${items.length} itens preservados!`
+    );
+
+    setDungeonExpedition(null);
+    setDungeonFloor(null);
+    setShowExtractionModal(false);
+    await handleTravel('village');
+  };
+
+  const handleDescendFloor = async () => {
+    if (!dungeonExpedition || !active) return;
+    const nextFloorNum = (dungeonExpedition.currentFloor || 1) + 1;
+    const nextFloor = generateDungeonFloor(dungeonExpedition.seed, nextFloorNum, dungeonExpedition.mode);
+
+    dungeonExpedition.currentFloor = nextFloorNum;
+    dungeonExpedition.maxFloorReached = Math.max(dungeonExpedition.maxFloorReached, nextFloorNum);
+    dungeonExpedition.floorHistory[nextFloorNum] = nextFloor;
+
+    setDungeonFloor(nextFloor);
+    setShowExtractionModal(false);
+
+    // Mover herói para a entrada do novo andar
+    await action({
+      action: 'move',
+      character: active.id,
+      x: nextFloor.spawnHero.x,
+      y: nextFloor.spawnHero.y,
+      maxBound: 11,
+      gridSize: 12
+    });
+
+    try { playSfx('door'); } catch {}
+    void narrate(
+      '',
+      `🕯️ O grupo desceu as escadas de pedra para o Andar ${nextFloorNum}! O ar torna-se mais rarefeito e criaturas mais perigosas espreitam na névoa.`
+    );
   };
 
 
@@ -2435,6 +2609,22 @@ export default function Game() {
                   <span className="hidden sm:inline">{room?.id === 'mmo-world-village' ? 'Mundo MMO' : (room?.name || 'Mesas')}</span>
                 </button>
                 <button
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-amber-300 bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 cursor-pointer"
+                  title="Configurações de Áudio e Jogo"
+                >
+                  <Settings size={13} />
+                  <span>Opções</span>
+                </button>
+                <button
+                  onClick={() => setIsMapEditorOpen(true)}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-sky-400 bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 cursor-pointer"
+                  title="Gerador de Mapas IA e Colisão"
+                >
+                  <Compass size={13} />
+                  <span>Mapas IA</span>
+                </button>
+                <button
                   onClick={() => setView('Aventura')}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 via-yellow-500 to-amber-600 hover:from-amber-500 hover:to-yellow-400 text-black font-black text-xs uppercase tracking-wider shadow-lg shadow-amber-950/40 border border-amber-400/60 transition-all active:scale-95 cursor-pointer"
                   title="Retornar para o mapa tático da aventura"
@@ -2825,6 +3015,24 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                       <Package size={12} />
                       <span>Mochila</span>
                     </button>
+
+                    <button
+                      onClick={() => setIsSettingsOpen(true)}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-zinc-700 text-xs font-semibold transition-colors"
+                      title="Configurações de Áudio e Jogo"
+                    >
+                      <Settings size={12} />
+                      <span>Opções</span>
+                    </button>
+
+                    <button
+                      onClick={() => setIsMapEditorOpen(true)}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-sky-400 border border-zinc-700 text-xs font-semibold transition-colors"
+                      title="Gerador de Mapas IA e Editor de Colisão"
+                    >
+                      <Compass size={12} />
+                      <span>Mapas IA</span>
+                    </button>
                   </div>
 
                   {/* Mobile Tab Switcher */}
@@ -3050,6 +3258,23 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                           waypoints
                         });
                       } catch {}
+
+                      // 4. Verificação de Exploração de Masmorra: Salas, Segredos e Inimigos
+                      if (battlemapBiome === 'dungeon' && dungeonFloor) {
+                        const discovery = checkRoomDiscovery(dungeonFloor, finalDest.x, finalDest.y);
+                        if (discovery.revealedSecretDoor) {
+                          try { playSfx('door'); } catch {}
+                          void narrate('', `👁️ Percepção Passiva! ${active?.name || 'O herói'} descobriu uma passagem secreta oculta na parede de pedra!`);
+                        }
+                        const encounter = checkRoomCombatEncounter(dungeonFloor, finalDest.x, finalDest.y);
+                        if (encounter.shouldTriggerCombat && !state?.combat) {
+                          void action({
+                            action: 'startCombat',
+                            character: heroId
+                          });
+                          void narrate('', `⚔️ ${encounter.room?.name || 'Câmara das Catacumbas'}: Inimigos à espreita atacam! Iniciando combate tático 5e!`);
+                        }
+                      }
 
                       // MMO: REST is authoritative and persists movement.
                       // The server broadcasts HERO_MOVED after the database update.
@@ -3873,6 +4098,124 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                       });
                     }}
                   />
+                )}
+
+                {/* Game Settings Modal */}
+                <GameSettingsModal open={isSettingsOpen} onOpenChange={setIsSettingsOpen} />
+
+                {/* Map Editor & AI Prompt Modal */}
+                <MapEditorModal open={isMapEditorOpen} onOpenChange={setIsMapEditorOpen} currentBiome={battlemapBiome} />
+
+                {/* Catacombs Expedition Entry Modal */}
+                {showExpeditionEntryModal && (
+                  <Dialog open={showExpeditionEntryModal} onOpenChange={setShowExpeditionEntryModal}>
+                    <DialogContent className="max-w-md bg-zinc-950/95 border-amber-500/50 text-zinc-100 shadow-[0_0_50px_rgba(0,0,0,0.8)] backdrop-blur-xl">
+                      <DialogHeader>
+                        <DialogTitle className="text-lg font-serif font-bold text-amber-300 flex items-center gap-2">
+                          <span>💀</span>
+                          <span>Expedição às Catacumbas dos Três Selos</span>
+                        </DialogTitle>
+                        <DialogDescription className="text-xs text-zinc-300 leading-relaxed pt-1">
+                          As catacumbas ancestrais contêm múltiplos andares gerados proceduralmente.
+                          Monstros patrulham as salas, segredos aguardam os atentos e a cada andar o perigo e os tesouros aumentam.
+                        </DialogDescription>
+                      </DialogHeader>
+
+                      <div className="space-y-3 py-3">
+                        <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800 space-y-1">
+                          <div className="font-bold text-xs text-amber-200">Como você deseja entrar?</div>
+                          <div className="text-[11px] text-zinc-400">
+                            No modo solo, os encontros são equilibrados para 1 aventureiro. Em grupo, composições ricas de inimigos com elites táticos serão geradas.
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <button
+                            onClick={() => handleStartExpedition('solo')}
+                            className="p-3 rounded-xl bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-700 hover:border-amber-400 text-left transition-all hover:scale-[1.02] cursor-pointer"
+                          >
+                            <div className="text-sm font-bold text-amber-200">⚔️ Entrar Sozinho</div>
+                            <div className="text-[10px] text-zinc-400 pt-0.5">Modo Solo equilibrado</div>
+                          </button>
+
+                          <button
+                            onClick={() => handleStartExpedition('party')}
+                            className="p-3 rounded-xl bg-gradient-to-br from-amber-950/40 to-zinc-950 border border-amber-600/60 hover:border-amber-400 text-left transition-all hover:scale-[1.02] cursor-pointer shadow-lg"
+                          >
+                            <div className="text-sm font-bold text-amber-300">👥 Formar Grupo</div>
+                            <div className="text-[10px] text-zinc-300 pt-0.5">Desafio tático e loot ampliado</div>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-zinc-800 pt-2 flex justify-end">
+                        <button
+                          onClick={() => setShowExpeditionEntryModal(false)}
+                          className="px-3 py-1.5 rounded-lg text-xs text-zinc-400 hover:text-zinc-200"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                )}
+
+                {/* Catacombs Extraction & Descend Modal */}
+                {showExtractionModal && (
+                  <Dialog open={showExtractionModal} onOpenChange={setShowExtractionModal}>
+                    <DialogContent className="max-w-md bg-zinc-950/95 border-amber-500/60 text-zinc-100 shadow-[0_0_60px_rgba(245,158,11,0.3)] backdrop-blur-xl">
+                      <DialogHeader>
+                        <DialogTitle className="text-lg font-serif font-bold text-amber-300 flex items-center gap-2">
+                          <span>🚪</span>
+                          <span>Escadaria das Profundezas • Andar {dungeonExpedition?.currentFloor || 1}</span>
+                        </DialogTitle>
+                        <DialogDescription className="text-xs text-zinc-300 leading-relaxed pt-1">
+                          Você alcançou uma passagem principal. Escolha entre extrair com os espólios acumulados ou arriscar o próximo andar por recompensas lendárias.
+                        </DialogDescription>
+                      </DialogHeader>
+
+                      <div className="space-y-3 py-3">
+                        {/* Resumo de Espólios Acumulados */}
+                        <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-500/40 flex items-center justify-between">
+                          <span className="text-xs font-semibold text-zinc-300">Espólios da Expedição:</span>
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs font-mono font-bold text-amber-300">
+                              🪙 {dungeonExpedition?.accumulatedLoot.gold || 0} PO
+                            </span>
+                            <span className="text-xs font-mono font-bold text-emerald-300">
+                              ✨ {dungeonExpedition?.accumulatedLoot.items.length || 0} Itens
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Botões de Ação */}
+                        <div className="flex flex-col gap-2 pt-1">
+                          <button
+                            onClick={handleExtractExpedition}
+                            className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-black font-black text-xs uppercase tracking-wide shadow-lg transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+                          >
+                            <span>🛡️ Extrair com Segurança (Garantir 100% dos Espólios)</span>
+                          </button>
+
+                          <button
+                            onClick={handleDescendFloor}
+                            className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-black font-black text-xs uppercase tracking-wide shadow-lg transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+                          >
+                            <span>⚔️ Aprofundar para o Andar {(dungeonExpedition?.currentFloor || 1) + 1} (Mais Risco & Loot)</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-zinc-800 pt-2 flex justify-end">
+                        <button
+                          onClick={() => setShowExtractionModal(false)}
+                          className="px-3 py-1.5 rounded-lg text-xs text-zinc-400 hover:text-zinc-200"
+                        >
+                          Continuar Explorando este Andar
+                        </button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
                 )}
               </div>
             </div>
