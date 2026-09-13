@@ -13,7 +13,7 @@ export type ItemTier = 1 | 2 | 3 | 4;
 export interface ProceduralItem extends Partial<ItemDefinition> {
   id: string;
   name: string;
-  type: 'arma' | 'armadura' | 'pocao' | 'pergaminho' | 'anel' | 'geral';
+  type: 'arma' | 'armadura' | 'escudo' | 'pocao' | 'pergaminho' | 'anel' | 'geral';
   rarity: ItemRarity;
   description: string;
   value: number; // In Gold Pieces (PO)
@@ -294,7 +294,7 @@ export function generateProceduralItem(tier: ItemTier = 1, seed = Date.now()): P
   const procItem: ProceduralItem = {
     id: itemId,
     name: finalName,
-    type: baseArm.type === 'armadura' ? 'armadura' : 'geral',
+    type: baseArm.category === 'escudo' ? 'escudo' : 'armadura',
     rarity,
     description: descParts.join(' '),
     value: Math.max(15, finalValue),

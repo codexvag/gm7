@@ -453,6 +453,8 @@ export type Character = {
   raging?: boolean;
   rageEndsAtRound?: number;
   equipment?: EquipmentSlots;
+  inventoryItemData?: Record<string, ItemDefinition>;
+  equipmentInventoryVersion?: number;
   gold?: number;
   partyId?: string;
   questProgress?: Record<string, boolean>;
@@ -527,12 +529,27 @@ export type Log = {
   sources?: { title: string; url: string }[];
 };
 
+export type NpcMemory = {
+  timestamp: number;
+  heroId?: string;
+  heroName?: string;
+  summary: string;
+};
+
 export type NpcEntity = {
   id: string;
   name: string;
   role: string;
   description: string;
   dialogue?: string[];
+  species?: string;
+  personality?: string;
+  history?: string;
+  currentGoal?: string;
+  secret?: string;
+  relationships?: string[];
+  memories?: NpcMemory[];
+  lastInteractionAt?: number;
   x?: number;
   y?: number;
   icon?: string;
@@ -547,6 +564,7 @@ export interface GroundCorpse {
   y: number;
   gold: number;
   items: string[];
+  itemData?: Record<string, ItemDefinition>;
   biome?: BiomeType;
   slainBy?: string;
   createdAt: number;
@@ -966,7 +984,7 @@ export function newCharacter(): Character {
     usedSlots: [0, 0, 0, 0, 0, 0, 0, 0, 0],
     features: '',
     spells: '',
-    inventory: 'Cota de Malha\nEspada Longa\nEscudo de Carvalho e Ferro\nMochila de Aventureiro\nTochas (10)\nPoção de Cura (2)',
+    inventory: 'Mochila de Aventureiro\nTochas (10)\nPoção de Cura (2)',
     notes: '',
     conditions: [],
     x: 2,
@@ -981,6 +999,7 @@ export function newCharacter(): Character {
       mainHand: 'espada-longa',
       offHand: 'escudo'
     },
+    equipmentInventoryVersion: 2,
     gold: 50,
     questProgress: {},
     worldFlags: {},
@@ -1239,9 +1258,15 @@ export function getSpellSlotsForClass(
 export function calculateEquippedStats(c: Character): Character {
   const next = { ...c };
   const eq = next.equipment || {};
+  const resolveEquippedItem =
+    (itemId?: string) =>
+      itemId
+        ? next.inventoryItemData?.[itemId] ||
+          ITEMS_CATALOG[itemId]
+        : undefined;
 
   // 1. Arma Principal
-  const mainHandItem = eq.mainHand ? ITEMS_CATALOG[eq.mainHand] : undefined;
+  const mainHandItem = resolveEquippedItem(eq.mainHand);
   if (mainHandItem && mainHandItem.type === 'arma') {
     next.weapon = mainHandItem.name;
     const strMod = mod(next.stats[0]);
@@ -1261,7 +1286,7 @@ export function calculateEquippedStats(c: Character): Character {
 
   // 2. Armadura e CA (incluindo Defesa sem Armadura oficial 5e)
   let calculatedAc = 10 + mod(next.stats[1]); // CA base sem armadura
-  const armorItem = eq.armor ? ITEMS_CATALOG[eq.armor] : undefined;
+  const armorItem = resolveEquippedItem(eq.armor);
   if (!armorItem || !armorItem.baseAc) {
     // Unarmored Defense
     if (next.className === 'Bárbaro') {
@@ -1285,21 +1310,21 @@ export function calculateEquippedStats(c: Character): Character {
   }
 
   // 3. Escudo na mão secundária (+2 CA oficial 5e)
-  const offHandItem = eq.offHand ? ITEMS_CATALOG[eq.offHand] : undefined;
+  const offHandItem = resolveEquippedItem(eq.offHand);
   if (offHandItem && offHandItem.acBonus) {
     calculatedAc += offHandItem.acBonus;
   }
 
   // 4. Elmo / Acessório
-  const helmItem = eq.helm ? ITEMS_CATALOG[eq.helm] : undefined;
+  const helmItem = resolveEquippedItem(eq.helm);
   if (helmItem && helmItem.acBonus) calculatedAc += helmItem.acBonus;
 
-  const accItem = eq.accessory ? ITEMS_CATALOG[eq.accessory] : undefined;
+  const accItem = resolveEquippedItem(eq.accessory);
   if (accItem && accItem.acBonus) calculatedAc += accItem.acBonus;
 
   // 5. Botas e Deslocamento
   const baseSpeed = next.species === 'Anão' || next.species === 'Pequenino' || next.species === 'Halfling' || next.species === 'Gnomo' ? 7.5 : 9;
-  const bootsItem = eq.boots ? ITEMS_CATALOG[eq.boots] : undefined;
+  const bootsItem = resolveEquippedItem(eq.boots);
   if (bootsItem && bootsItem.id === 'botas-sombra') {
     next.speed = baseSpeed + 1.5;
   } else {

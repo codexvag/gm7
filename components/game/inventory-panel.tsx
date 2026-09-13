@@ -19,10 +19,15 @@ import {
 import {
   Character,
   ITEMS_CATALOG,
-  ItemDefinition,
-  calculateEquippedStats
+  ItemDefinition
 } from '@/lib/game-engine';
 import { parseInventoryStacks, normalizeInventoryName } from '@/lib/inventory-utils';
+import {
+  equipInventoryItem,
+  getEquipSlotForItem,
+  resolveCharacterItem,
+  unequipInventorySlot
+} from '@/lib/equipment-inventory';
 
 interface InventoryPanelProps {
   hero: Character;
@@ -154,7 +159,12 @@ export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: Inven
 
   const equipment = hero.equipment || {};
   // Resolve equipped item definitions
-  const getEquipped = (slotId?: string) => (slotId ? ITEMS_CATALOG[slotId] : undefined);
+  const getEquipped =
+    (slotId?: string) =>
+      resolveCharacterItem(
+        hero,
+        slotId
+      );
   const mainHand = getEquipped(equipment.mainHand);
   const offHand = getEquipped(equipment.offHand);
   const armor = getEquipped(equipment.armor);
@@ -163,43 +173,37 @@ export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: Inven
   const accessory = getEquipped(equipment.accessory);
 
   // Equip an item
-  const handleEquip = (item: ItemDefinition) => {
-    const nextEquipment = { ...equipment };
+  const handleEquip = (
+    item: ItemDefinition
+  ) => {
+    const updated =
+      equipInventoryItem(
+        hero,
+        item
+      );
 
-    if (item.type === 'arma') {
-      nextEquipment.mainHand = item.id;
-    } else if (item.type === 'escudo') {
-      nextEquipment.offHand = item.id;
-    } else if (item.type === 'armadura') {
-      nextEquipment.armor = item.id;
-    } else if (item.type === 'elmo') {
-      nextEquipment.helm = item.id;
-    } else if (item.type === 'botas') {
-      nextEquipment.boots = item.id;
-    } else if (item.type === 'acessorio') {
-      nextEquipment.accessory = item.id;
-    }
+    onUpdateHero(
+      updated
+    );
 
-    const updated = calculateEquippedStats({
-      ...hero,
-      equipment: nextEquipment
-    });
-
-    onUpdateHero(updated);
-    setSelectedItem(null);
+    setSelectedItem(
+      null
+    );
   };
 
   // Unequip slot
-  const handleUnequip = (slot: keyof typeof equipment) => {
-    const nextEquipment = { ...equipment };
-    delete nextEquipment[slot];
+  const handleUnequip = (
+    slot: keyof typeof equipment
+  ) => {
+    const updated =
+      unequipInventorySlot(
+        hero,
+        slot
+      );
 
-    const updated = calculateEquippedStats({
-      ...hero,
-      equipment: nextEquipment
-    });
-
-    onUpdateHero(updated);
+    onUpdateHero(
+      updated
+    );
   };
 
   // Use consumable (e.g. potion)
@@ -219,7 +223,13 @@ export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: Inven
   // Calculate total weight
   const totalWeight = Object.values(equipment)
     .filter(Boolean)
-    .reduce((sum, id) => sum + (ITEMS_CATALOG[id!]?.weight || 0), 12);
+    .reduce((sum, id) => sum +
+      (
+        resolveCharacterItem(
+          hero,
+          id as string
+        )?.weight || 0
+      ), 12);
 
   const maxWeight = hero.stats[0] * 7.5; // Strength x 7.5 kg (5e metric)
 
@@ -399,7 +409,7 @@ export function InventoryPanel({ hero, onUpdateHero, onClose, onUseItem }: Inven
                       <Heart size={14} />
                       <span>Usar</span>
                     </button>
-                  ) : ['arma', 'escudo', 'armadura', 'elmo', 'botas', 'acessorio'].includes(selectedItem.type) ? (
+                  ) : getEquipSlotForItem(selectedItem) ? (
                     <button
                       onClick={() => handleEquip(selectedItem)}
                       className="bg-amber-600 hover:bg-amber-500 text-zinc-950 font-bold text-xs px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 shadow"

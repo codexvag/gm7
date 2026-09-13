@@ -85,6 +85,7 @@ import {
 } from '@/lib/campaign-progression';
 import { readCompactWorldContext, evaluateDirectorPacing, executeDirectorIntent } from '@/lib/sandbox-director';
 import { isGridTileWalkable, MAP_COLLISION_PROFILES, type CollisionPolygon } from '@/lib/collision-system';
+import { normalizeEnemyMapPosition } from '@/lib/map-bounds';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -603,6 +604,17 @@ export async function POST(req: NextRequest) {
                 loot.items.map(
                   (item) =>
                     item.id
+                ),
+
+              /* POLISH_A_SRD_CORPSE_ITEM_DATA */
+              itemData:
+                Object.fromEntries(
+                  loot.items.map(
+                    (item) => [
+                      item.id,
+                      { ...item }
+                    ]
+                  )
                 ),
 
               biome:
@@ -2344,6 +2356,15 @@ export async function POST(req: NextRequest) {
               y: target.y ?? 4,
               gold: mobLoot.gold,
               items: mobLoot.items.map((it) => it.id),
+              itemData:
+                Object.fromEntries(
+                  mobLoot.items.map(
+                    (item) => [
+                      item.id,
+                      { ...item }
+                    ]
+                  )
+                ),
               biome: corpseBiome,
               slainBy: p.name,
               createdAt: Date.now()
@@ -3476,7 +3497,9 @@ export async function POST(req: NextRequest) {
         const lootedItemNames: string[] = [];
 
         for (const itemId of corpse.items) {
-          const itemDef = ITEMS_CATALOG[itemId];
+          const itemDef =
+            corpse.itemData?.[itemId] ||
+            ITEMS_CATALOG[itemId];
 
           const itemName =
             itemDef
@@ -3491,6 +3514,16 @@ export async function POST(req: NextRequest) {
               itemName,
               1
             );
+
+          /* POLISH_PERSIST_LOOT_ITEM_DATA */
+          if (itemDef) {
+            p.inventoryItemData = {
+              ...(p.inventoryItemData || {}),
+              [itemDef.id]: {
+                ...itemDef
+              }
+            };
+          }
         }
 
         touchChar(p);
@@ -5007,6 +5040,14 @@ export async function POST(req: NextRequest) {
 
         if (rawItem) {
           registerProceduralItem(rawItem);
+
+          /* POLISH_PERSIST_BOUGHT_ITEM_DATA */
+          p.inventoryItemData = {
+            ...(p.inventoryItemData || {}),
+            [rawItem.id]: {
+              ...rawItem
+            }
+          };
         }
         touchChar(p);
         log(`🛒 ${p.name} comprou "${itemToBuy.name}" por ${finalPrice} PO. (Saldo: ${p.gold} PO)`, 'player');
@@ -6106,6 +6147,47 @@ function applyAutoShieldReaction(
   );
 }
 
+function clampEnemyToBiome(
+  enemy: Enemy,
+  fallbackBiome?: string
+): void {
+  const normalized =
+    normalizeEnemyMapPosition(
+      enemy,
+      fallbackBiome ||
+        enemy.biome ||
+        'village'
+    );
+
+  enemy.x =
+    normalized.x;
+
+  enemy.y =
+    normalized.y;
+}
+
+function isEnemyStepLegal(
+  enemy: Enemy,
+  x: number,
+  y: number
+): boolean {
+  const normalized =
+    normalizeEnemyMapPosition(
+      {
+        ...enemy,
+        x,
+        y
+      },
+      enemy.biome ||
+        'village'
+    );
+
+  return (
+    normalized.x === x &&
+    normalized.y === y
+  );
+}
+
 function executeSingleEnemyRevenge(
   enemy: Enemy,
   attacker: Character,
@@ -6117,6 +6199,14 @@ function executeSingleEnemyRevenge(
   ) {
     return;
   }
+
+  /* POLISH_A_REVENGE_ENEMY_CLAMP */
+  clampEnemyToBiome(
+    enemy,
+    attacker.biome ||
+      s.biome ||
+      'village'
+  );
 
   const profile =
     getCreatureProfile(
@@ -6167,10 +6257,11 @@ function executeSingleEnemyRevenge(
         );
 
       if (
-        nx < 0 ||
-        nx > 15 ||
-        ny < 0 ||
-        ny > 15
+        !isEnemyStepLegal(
+          enemy,
+          nx,
+          ny
+        )
       ) {
         break;
       }
@@ -6214,10 +6305,11 @@ function executeSingleEnemyRevenge(
         );
 
       if (
-        nx < 0 ||
-        nx > 15 ||
-        ny < 0 ||
-        ny > 15
+        !isEnemyStepLegal(
+          enemy,
+          nx,
+          ny
+        )
       ) {
         break;
       }
@@ -6628,10 +6720,11 @@ function executeEnemyAI(s: State) {
           : enemy.y - sy;
 
       if (
-        nx < 0 ||
-        nx > 15 ||
-        ny < 0 ||
-        ny > 15
+        !isEnemyStepLegal(
+          enemy,
+          nx,
+          ny
+        )
       ) {
         break;
       }
@@ -6697,6 +6790,14 @@ function executeEnemyAI(s: State) {
     if (!enemy) {
       break;
     }
+
+    /* POLISH_A_ACTIVE_ENEMY_CLAMP */
+    clampEnemyToBiome(
+      enemy,
+      enemy.biome ||
+        s.biome ||
+        'village'
+    );
 
     const profile =
       getCreatureProfile(

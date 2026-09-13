@@ -329,8 +329,33 @@ function DndTokens({
         const statusClasses = conditions.map((c: string) => getStatusClass(c)).filter(Boolean).join(' ');
         const isTargeted = targetingAction && isInRange(enemy.x, enemy.y);
 
-        const leftPerc = (enemy.x / gridSize) * 100;
-        const topPerc = (enemy.y / gridSize) * 100;
+        /*
+         * Ultima barreira visual:
+         * mesmo um save legado nunca desenha inimigo fora do canvas.
+         */
+        const safeEnemyX =
+          Math.max(
+            0,
+            Math.min(
+              gridSize - 1,
+              Number(enemy.x) || 0
+            )
+          );
+
+        const safeEnemyY =
+          Math.max(
+            0,
+            Math.min(
+              gridSize - 1,
+              Number(enemy.y) || 0
+            )
+          );
+
+        const leftPerc =
+          (safeEnemyX / gridSize) * 100;
+
+        const topPerc =
+          (safeEnemyY / gridSize) * 100;
         const sizePerc = 100 / gridSize;
         const recoilStyle = getRecoilStyle(enemy.id);
         const visual = getEnemyTokenVisual(enemy.name);

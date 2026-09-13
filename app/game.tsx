@@ -76,7 +76,12 @@ import { BottomPlayerHud, type ActionSelection } from '@/components/game/bottom-
 import { TacticalMap, type ProjectileVfx } from '@/components/game/tactical-map';
 import { InventoryPanel } from '@/components/game/inventory-panel';
 import { ShopModal, type ShopMerchant } from '@/components/game/shop-modal';
-import { NpcDialog, type NpcDialogData } from '@/components/game/npc-dialog';
+import {
+  NpcDialog,
+  type NpcDialogData,
+  type NpcDialogReply,
+  type NpcDialogTurn
+} from '@/components/game/npc-dialog';
 import { ExplorationBar } from '@/components/game/exploration-bar';
 import { QuestLog } from '@/components/game/quest-log';
 import { CampaignTracker } from '@/components/game/campaign-tracker';
@@ -1825,6 +1830,123 @@ export default function Game() {
     );
   };
 
+  const handleNpcConversationTurn = useCallback(
+    async (
+      actionText: string,
+      conversation: NpcDialogTurn[]
+    ): Promise<NpcDialogReply | void> => {
+      if (
+        !room?.id ||
+        !activeNpcDialog
+      ) {
+        return;
+      }
+
+      try {
+        const response =
+          await fetch(
+            '/api/npc-dialogue',
+            {
+              method:
+                'POST',
+
+              headers: {
+                'Content-Type':
+                  'application/json'
+              },
+
+              body:
+                JSON.stringify({
+                  room:
+                    room.id,
+
+                  npcId:
+                    activeNpcDialog.id,
+
+                  text:
+                    actionText,
+
+                  conversation,
+
+                  key
+                })
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (
+          !response.ok
+        ) {
+          throw new Error(
+            data.error ||
+            'Falha ao conversar com NPC.'
+          );
+        }
+
+        const choices =
+          Array.isArray(
+            data.choices
+          )
+            ? data.choices
+                .map(
+                  (
+                    choice: string
+                  ) => ({
+                    label:
+                      choice,
+
+                    actionText:
+                      choice
+                  })
+                )
+            : [];
+
+        return {
+          reply:
+            String(
+              data.answer ||
+              ''
+            ),
+
+          options:
+            choices
+        };
+      } catch (error) {
+        console.error(
+          '[NPC AI conversation]',
+          error
+        );
+
+        return {
+          reply:
+            'Perdoe-me. Parece que o barulho ao redor interrompeu meu raciocinio. Pergunte novamente em um instante.',
+
+          options: [
+            {
+              label:
+                'O que aconteceu por aqui recentemente?',
+              actionText:
+                'O que aconteceu por aqui recentemente?'
+            },
+            {
+              label:
+                'Conte-me sobre voce.',
+              actionText:
+                'Conte-me sobre voce.'
+            }
+          ]
+        };
+      }
+    },
+    [
+      room?.id,
+      activeNpcDialog?.id,
+      key
+    ]
+  );
+
   const handleTalkNpc = (npcId?: string) => {
     const npcs = state?.npcs || [];
     const chosen = npcId ? npcs.find((n) => n.id === npcId) : (npcs[0] || null);
@@ -1928,7 +2050,10 @@ export default function Game() {
         name: chosen.name,
         role: chosen.role,
         dialogText,
-        options
+        options,
+        species: chosen.species,
+        personality: chosen.personality,
+        currentGoal: chosen.currentGoal
       });
     } else {
       const generated = generateRandomNpc();
@@ -1937,7 +2062,9 @@ export default function Game() {
         name: generated.name,
         role: generated.role,
         dialogText: `${generated.dialogueIntro} (${generated.description})`,
-        options: generated.options
+        options: generated.options,
+        species: generated.species,
+        personality: generated.personality
       });
     }
   };
@@ -4101,7 +4228,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                 {activeNpcDialog && (
                   <NpcDialog
                     npc={activeNpcDialog}
-                    onSelectOption={(actionText) => {
+                    onSelectOption={async (actionText, conversation) => {
                       if (actionText === 'OPEN_SHOP_ELENOR') {
                         setShopMerchant({
                           id: 'elenor',

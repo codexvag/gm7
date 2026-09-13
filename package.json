@@ -19,7 +19,8 @@
     "test:srd:c1": "node scripts/test-srd-c1.mjs",
     "test:srd:c2": "node scripts/test-srd-c2.mjs",
     "test:dungeon": "node scripts/test-dungeon-crawler.mjs",
-    "test:all": "node scripts/test-srd-b1.mjs && node scripts/test-srd-b2.mjs && node scripts/test-srd-b3.mjs && node scripts/test-srd-c1.mjs && node scripts/test-srd-c2.mjs && node scripts/test-dungeon-crawler.mjs"
+    "test:all": "node scripts/test-srd-b1.mjs && node scripts/test-srd-b2.mjs && node scripts/test-srd-b3.mjs && node scripts/test-srd-c1.mjs && node scripts/test-srd-c2.mjs && node scripts/test-dungeon-crawler.mjs && node scripts/test-polish-a.mjs",
+    "test:polish:a": "node scripts/test-polish-a.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
