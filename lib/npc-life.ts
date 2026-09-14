@@ -54,7 +54,7 @@ const SPECIES = [
 const PERSONALITIES = [
   'Prudente e observador; mede as palavras antes de confiar em desconhecidos.',
   'Caloroso, curioso e levemente supersticioso; lembra rostos e pequenos favores.',
-  'Direto e pragmÃ¡tico; respeita competencia, coragem e promessas cumpridas.',
+  'Direto e pragmático; respeita competencia, coragem e promessas cumpridas.',
   'Reservado e melancolico; fala como quem carrega historias que prefere nao reviver.',
   'Vivaz e astuto; usa humor seco para esconder preocupacoes reais.',
   'Gentil, culto e atento aos detalhes; evita julgar alguem antes de ouvir.'
@@ -108,7 +108,7 @@ const FIXED: Record<
     personality:
       'Curiosa, inteligente e energica. Elenor transforma quase toda conversa em observacao pratica sobre ervas, criaturas ou sobrevivencia.',
     history:
-      'Estudou botÃ¢nica e alquimia com curandeiros itinerantes antes de fixar sua oficina em Vila do Rio Verde.',
+      'Estudou botânica e alquimia com curandeiros itinerantes antes de fixar sua oficina em Vila do Rio Verde.',
     currentGoal:
       'Manter aventureiros vivos e identificar como a corrupcao regional esta alterando plantas e criaturas.',
     secret:

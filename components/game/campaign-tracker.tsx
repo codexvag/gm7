@@ -369,7 +369,7 @@ export function CampaignTracker({
             <div className="flex-1 overflow-y-auto space-y-4 pr-1 scrollbar-thin scrollbar-thumb-amber-700">
               {/* Introduction Story Lore */}
               <div className="p-3.5 rounded-2xl bg-amber-950/30 border border-amber-800/40 text-xs sm:text-sm leading-relaxed text-amber-100/90 font-serif italic">
-                &ldquo;Durante séculos, os três selos de Valdoria protegeram o Vale das corrupções ancestrais. No entanto, estranhas cinzas começaram a soprar dos bosques profundos da Floresta dos Sussurros, e as sentinelas de pedra despertaram com fúria sombria. A pacífica Vila do Rio Verde é a última fortaleza de esperança. Vocês foram convocados pelo Ancião Doran para desvendar a violação dos selos, adentrar as catacumbas e erradicar o Conjurador do Vazio antes que a noite eterna recaia sobre o reino.&rdquo;
+                "Durante séculos, os três selos de Valdoria protegeram o Vale das corrupções ancestrais. No entanto, estranhas cinzas começaram a soprar dos bosques profundos da Floresta dos Sussurros, e as sentinelas de pedra despertaram com fúria sombria. A pacífica Vila do Rio Verde é a última fortaleza de esperança. Vocês foram convocados pelo Ancião Doran para desvendar a violação dos selos, adentrar as catacumbas e erradicar o Conjurador do Vazio antes que a noite eterna recaia sobre o reino."
               </div>
 
               {/* Roteiro da Campanha: Início, Meio e Fim */}

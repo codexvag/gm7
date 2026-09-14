@@ -178,7 +178,7 @@ export async function GET(req: NextRequest) {
         .all();
     }
     const MMO_ROOM_ID = 'mmo-world-village';
-    const MMO_ROOM_NAME = 'ðŸŒ Aethelgard: Vila do Rio Verde (Mundo MMO)';
+    const MMO_ROOM_NAME = '🌍 Aethelgard: Vila do Rio Verde (Mundo MMO)';
 
     const requestedId = req.nextUrl.searchParams.get('room');
 
@@ -299,7 +299,7 @@ export async function GET(req: NextRequest) {
     }), user);
   } catch (err) {
     console.error('[GET /api/game Error]:', err);
-    return NextResponse.json({ error: 'NÃ£o foi possÃ­vel carregar a mesa. Tente novamente.' }, { status: 503 });
+    return NextResponse.json({ error: 'Não foi possível carregar a mesa. Tente novamente.' }, { status: 503 });
   }
 }
 
@@ -309,7 +309,7 @@ export async function POST(req: NextRequest) {
     user = await getChatGPTUser();
     if (!user) return NextResponse.json({ error: 'Entre para salvar sua aventura.' }, { status: 401 });
     if (!isOriginAllowed(req)) {
-      return NextResponse.json({ error: 'Origem invÃ¡lida.' }, { status: 403 });
+      return NextResponse.json({ error: 'Origem inválida.' }, { status: 403 });
     }
     const raw = await req.text();
     if (raw.length > 100000) throw Error('Dados muito grandes.');
@@ -366,7 +366,7 @@ export async function POST(req: NextRequest) {
 
     if (a.action === 'join') {
       const room = await db.prepare('SELECT id FROM rooms WHERE code=?').bind(String(a.code).trim()).first<{ id: string }>();
-      if (!room) throw Error('CÃ³digo de convite invÃ¡lido.');
+      if (!room) throw Error('Código de convite inválido.');
       await db.prepare('INSERT OR IGNORE INTO members(room,user) VALUES(?,?)').bind(room.id, user.userId).run();
       return withUserSession(NextResponse.json({ id: room.id }), user);
     }
@@ -375,7 +375,7 @@ export async function POST(req: NextRequest) {
       const existingMmo = await db.prepare('SELECT id FROM rooms WHERE id=?').bind('mmo-world-village').first();
       if (!existingMmo) {
         await db.prepare('INSERT INTO rooms(id,owner,name,state,code) VALUES(?,?,?,?,?)')
-          .bind('mmo-world-village', 'world_server', 'ðŸŒ Aethelgard: Vila do Rio Verde (Mundo MMO)', JSON.stringify(initialState()), 'mmo-village')
+          .bind('mmo-world-village', 'world_server', '🌍 Aethelgard: Vila do Rio Verde (Mundo MMO)', JSON.stringify(initialState()), 'mmo-village')
           .run();
       }
       await db.prepare('INSERT OR IGNORE INTO members(room,user) VALUES(?,?)')
@@ -427,13 +427,13 @@ export async function POST(req: NextRequest) {
     }
 
     if (!r) {
-      return withUserSession(NextResponse.json({ error: 'Mesa indisponÃ­vel no momento.' }, { status: 503 }), user);
+      return withUserSession(NextResponse.json({ error: 'Mesa indisponível no momento.' }, { status: 503 }), user);
     }
 
     const isMmo = r.id === 'mmo-world-village';
     if (a.version !== undefined && r.version !== a.version && a.action !== 'character' && !isMmo && a.action !== 'move' && a.action !== 'pass' && a.action !== 'location' && a.action !== 'attack' && a.action !== 'check' && a.action !== 'useItem' && a.action !== 'respawn') {
       return withUserSession(NextResponse.json({
-        error: 'A mesa mudou. Os dados foram atualizados; tente sua aÃ§Ã£o novamente.',
+        error: 'A mesa mudou. Os dados foram atualizados; tente sua ação novamente.',
         room: { ...r, state: JSON.parse(r.state) }
       }, { status: 409 }), user);
     }
@@ -469,7 +469,7 @@ export async function POST(req: NextRequest) {
       touchChar(c);
     }
     const own = () => {
-      if (!c) throw Error('Personagem nÃ£o encontrado.');
+      if (!c) throw Error('Personagem não encontrado.');
       if (isMmo) {
         if (c.owner && c.owner !== user!.userId) throw Error('Escolha um personagem seu.');
       } else if (!owner && c.owner !== user!.userId) {
@@ -478,7 +478,7 @@ export async function POST(req: NextRequest) {
       return c;
     };
     const gm = () => {
-      if (!owner && !isMmo) throw Error('Somente o anfitriÃ£o pode realizar esta aÃ§Ã£o.');
+      if (!owner && !isMmo) throw Error('Somente o anfitrião pode realizar esta ação.');
     };
     const log = (text: string, kind: 'gm' | 'roll' | 'player' | 'system' = 'system') =>
       s.logs.push(entry(text, kind));
@@ -705,7 +705,7 @@ export async function POST(req: NextRequest) {
       }
       case 'roll': {
         const result = roll(String(a.formula));
-        log(`${user.displayName}: ${a.formula} â†’ [${result.results.join(', ')}] ${result.bonus ? '+ (' + result.bonus + ') ' : ''}= ${result.total}`, 'roll');
+        log(`${user.displayName}: ${a.formula} → [${result.results.join(', ')}] ${result.bonus ? '+ (' + result.bonus + ') ' : ''}= ${result.total}`, 'roll');
         break;
       }
       case 'tacticalAction': {
@@ -1732,7 +1732,7 @@ export async function POST(req: NextRequest) {
       case 'check': {
         const p = own();
         const ability = Number(a.ability);
-        if (!Number.isInteger(ability) || ability < 0 || ability > 5) throw Error('Atributo invÃ¡lido.');
+        if (!Number.isInteger(ability) || ability < 0 || ability > 5) throw Error('Atributo inválido.');
         const result = d20(a.mode);
         const bonus =
           mod(p.stats[ability]) +
@@ -3516,7 +3516,7 @@ export async function POST(req: NextRequest) {
         s.combat = false;
         s.order = [];
        s.actionUsed = false;
-        log('O anfitriÃ£o encerrou o combate.');
+        log('O anfitrião encerrou o combate.');
         break;
       }
       case 'move': {
@@ -3528,14 +3528,14 @@ export async function POST(req: NextRequest) {
         const maxBound = Number(a.maxBound ?? defaultBound);
         const validation = validateMovement(p, { x, y }, s, maxBound);
         if (!validation.valid) {
-          throw Error(validation.reason || 'PosiÃ§Ã£o invÃ¡lida.');
+          throw Error(validation.reason || 'Posição inválida.');
         }
 
         // Server-Side Obstacle Collision Validation
         const gridSize = a.gridSize ? Number(a.gridSize) : maxBound + 1;
         const activeZones = getActiveZonesForBiome(biome);
         if (!isGridTileWalkable(biome, x, y, gridSize, activeZones)) {
-          throw Error('Destino intransponÃ­vel ou bloqueado por obstÃ¡culo.');
+          throw Error('Destino intransponível ou bloqueado por obstáculo.');
         }
 
         // SRD_OPPORTUNITY_ATTACK
@@ -4207,9 +4207,9 @@ export async function POST(req: NextRequest) {
       case 'levelup': {
         const p = own();
         if (!canLevelUp(p)) {
-          throw Error(`XP insuficiente para subir de nÃ­vel (${p.xp || 0}/${getXpForNextLevel(p.level)} XP necessÃ¡rios).`);
+          throw Error(`XP insuficiente para subir de nível (${p.xp || 0}/${getXpForNextLevel(p.level)} XP necessários).`);
         }
-        if (p.level >= 20) throw Error('Este personagem jÃ¡ atingiu o nÃ­vel mÃ¡ximo (20).');
+        if (p.level >= 20) throw Error('Este personagem já atingiu o nível máximo (20).');
 
         const oldLevel = p.level;
         const newLevel = oldLevel + 1;
@@ -4219,12 +4219,12 @@ export async function POST(req: NextRequest) {
         const classTuple = classes.find((cl) => cl[0] === p.className);
         const hitDieSides = classTuple ? classTuple[1] : 8;
         const conMod = mod(p.stats[2]);
-        // Incremento de PV pela mÃ©dia ou valor fornecido
+        // Incremento de PV pela média ou valor fornecido
         const hpGain = Math.max(1, Math.floor(hitDieSides / 2) + 1 + conMod);
         p.maxHp += hpGain;
         p.hp = Math.min(p.maxHp, p.hp + hpGain);
 
-        // AtualizaÃ§Ã£o de espaÃ§os de magia para conjuradores
+        // Atualização de espaços de magia para conjuradores
         p.slots = getSpellSlotsForClass(p.className, newLevel);
 
         applyLevelUpSpellChoices(
@@ -4235,7 +4235,7 @@ export async function POST(req: NextRequest) {
         );
         if (!p.usedSlots) p.usedSlots = [0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-        // ASI: Aumento no Valor de Atributo (distribuiÃ§Ã£o de 2 pontos nos nÃ­veis 4, 8, etc.)
+        // ASI: Aumento no Valor de Atributo (distribuição de 2 pontos nos níveis 4, 8, etc.)
         if (isAsiLevel(p.className, newLevel) && Array.isArray(a.statIncreases)) {
           for (const statIdx of a.statIncreases) {
             const idx = Number(statIdx);
@@ -4245,11 +4245,11 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Recalcular bÃ´nus de proficiÃªncia, ataque, CA com os novos atributos e nÃ­vel
+        // Recalcular bônus de proficiência, ataque, CA com os novos atributos e nível
         const recalculated = calculateEquippedStats(p);
         Object.assign(p, recalculated);
 
-        log(`ðŸŒŸ LEVEL UP! ${p.name} alcanÃ§ou o NÃ VEL ${newLevel}! (+${hpGain} PV MÃ¡x). ParabÃ©ns!`, 'gm');
+        log(`🌟 LEVEL UP! ${p.name} alcançou o Nà VEL ${newLevel}! (+${hpGain} PV Máx). Parabéns!`, 'gm');
         break;
       }
       case 'respawn': {
@@ -4404,7 +4404,7 @@ export async function POST(req: NextRequest) {
         if (!text) throw Error('Mensagem vazia.');
         const senderChar = s.characters.find((ch) => ch.owner === user!.userId || ch.id === a.character);
         const charName = String(a.characterName || (senderChar ? senderChar.name : 'Aventureiro')).slice(0, 50);
-        log(`ðŸ’¬ ${charName}: "${text}"`, 'player');
+        log(`💬 ${charName}: "${text}"`, 'player');
         break;
       }
       case 'partyInvite': {
@@ -4416,10 +4416,10 @@ export async function POST(req: NextRequest) {
         
         const targetId = String(a.targetCharId || a.target || '');
         const targetChar = s.characters.find((ch) => ch.id === targetId);
-        if (!targetChar) throw Error('Aventureiro nÃ£o encontrado.');
-        if (targetChar.id === senderChar.id) throw Error('VocÃª nÃ£o pode convidar a si mesmo.');
+        if (!targetChar) throw Error('Aventureiro não encontrado.');
+        if (targetChar.id === senderChar.id) throw Error('Você não pode convidar a si mesmo.');
         if (targetChar.partyId && senderChar.partyId && targetChar.partyId === senderChar.partyId) {
-          throw Error(`${targetChar.name} jÃ¡ faz parte do seu grupo.`);
+          throw Error(`${targetChar.name} já faz parte do seu grupo.`);
         }
 
         if (!s.partyInvites) s.partyInvites = [];
@@ -4428,7 +4428,7 @@ export async function POST(req: NextRequest) {
 
         const existing = s.partyInvites.find((inv) => inv.fromCharId === senderChar.id && inv.toCharId === targetChar.id);
         if (existing) {
-          throw Error(`Convite jÃ¡ enviado para ${targetChar.name}. Aguarde.`);
+          throw Error(`Convite já enviado para ${targetChar.name}. Aguarde.`);
         }
 
         const invite = {
@@ -4442,7 +4442,7 @@ export async function POST(req: NextRequest) {
           timestamp: now
         };
         s.partyInvites.push(invite);
-        log(`ðŸ›¡ï¸ ${senderChar.name} convidou ${targetChar.name} para formar um grupo!`, 'player');
+        log(`🛡️ ${senderChar.name} convidou ${targetChar.name} para formar um grupo!`, 'player');
         break;
       }
       case 'partyAccept': {
@@ -4455,7 +4455,7 @@ export async function POST(req: NextRequest) {
 
         const inviter = s.characters.find((ch) => ch.id === invite.fromCharId);
         const receiver = s.characters.find((ch) => ch.id === invite.toCharId);
-        if (!inviter || !receiver) throw Error('Personagem do convite nÃ£o encontrado.');
+        if (!inviter || !receiver) throw Error('Personagem do convite não encontrado.');
 
         const partyId = inviter.partyId || ('party_' + crypto.randomUUID().slice(0, 8));
         inviter.partyId = partyId;
@@ -4472,7 +4472,7 @@ export async function POST(req: NextRequest) {
         touchChar(inviter);
         touchChar(receiver);
 
-        log(`ðŸ¤ ${receiver.name} aceitou o convite e juntou-se ao grupo de ${inviter.name}!`, 'player');
+        log(`🤝 ${receiver.name} aceitou o convite e juntou-se ao grupo de ${inviter.name}!`, 'player');
         break;
       }
       case 'partyDecline': {
@@ -4482,20 +4482,20 @@ export async function POST(req: NextRequest) {
         if (inviteIdx !== -1) {
           const invite = s.partyInvites[inviteIdx];
           s.partyInvites.splice(inviteIdx, 1);
-          log(`âŒ ${invite.toCharName} recusou o convite de grupo de ${invite.fromCharName}.`, 'player');
+          log(`❌ ${invite.toCharName} recusou o convite de grupo de ${invite.fromCharName}.`, 'player');
         }
         break;
       }
       case 'partyLeave': {
         const p = own();
-        if (!p.partyId) throw Error('VocÃª nÃ£o estÃ¡ em nenhum grupo.');
+        if (!p.partyId) throw Error('Você não está em nenhum grupo.');
         const oldPartyId = p.partyId;
         p.partyId = undefined;
         const remaining = s.characters.filter((ch) => ch.partyId === oldPartyId);
         if (remaining.length === 1) {
           remaining[0].partyId = undefined;
         }
-        log(`ðŸšª ${p.name} saiu do grupo e agora segue como aventureiro solo.`, 'player');
+        log(`🚪 ${p.name} saiu do grupo e agora segue como aventureiro solo.`, 'player');
         break;
       }
       case 'leave': {
@@ -4508,7 +4508,7 @@ export async function POST(req: NextRequest) {
           s.characters = s.characters.filter((ch) => ch.owner !== leaveUid);
         }
         if (s.characters.length !== initialCount) {
-          log(`ðŸ‘‹ Um aventureiro partiu da Ã¡rea e descansou na taverna.`, 'system');
+          log(`👋 Um aventureiro partiu da área e descansou na taverna.`, 'system');
         }
         break;
       }
@@ -5065,7 +5065,7 @@ export async function POST(req: NextRequest) {
       }
 
       default:
-        throw Error('AÃ§Ã£o desconhecida.');
+        throw Error('Ação desconhecida.');
     }
 
     s.logs = s.logs.slice(-200);
@@ -5338,7 +5338,7 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     console.error('[API Error]:', e);
     return withUserSession(NextResponse.json(
-      { error: e instanceof Error ? e.message : 'NÃ£o foi possÃ­vel salvar. Seu conteÃºdo foi preservado.' },
+      { error: e instanceof Error ? e.message : 'Não foi possível salvar. Seu conteúdo foi preservado.' },
       { status: 400 }
     ), user);
   }

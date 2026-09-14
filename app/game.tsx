@@ -138,7 +138,7 @@ type Room = {
 const navigation = [
   { icon: Swords, name: 'Aventura' },
   { icon: Users, name: 'Personagens' },
-  { icon: BookOpen, name: 'CompÃªndio' },
+  { icon: BookOpen, name: 'Compêndio' },
   { icon: MapIcon, name: 'Atlas' },
   { icon: Settings, name: 'Mestre de jogo' }
 ];
@@ -294,7 +294,7 @@ export default function Game() {
     generateBattlemap('village', 12, 12345)
   );
 
-  // Estados de ConfiguraÃ§Ãµes, Editor de Mapas e Dungeon Crawler
+  // Estados de Configurações, Editor de Mapas e Dungeon Crawler
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isMapEditorOpen, setIsMapEditorOpen] = useState(false);
   const [dungeonExpedition, setDungeonExpedition] = useState<DungeonExpeditionState | null>(null);
@@ -433,7 +433,7 @@ export default function Game() {
       const d = (await r.json()) as ApiData;
       if (!r.ok) {
         if (id) {
-          console.warn(`Mesa ${id} temporariamente indisponÃ­vel (${d.error}), mantendo mesa ativa.`);
+          console.warn(`Mesa ${id} temporariamente indisponível (${d.error}), mantendo mesa ativa.`);
           return d;
         }
         throw Error(d.error);
@@ -457,7 +457,7 @@ export default function Game() {
         const isMmo = d.room.id === 'mmo-world-village';
         const myHeroes = heroes.filter((c: Character) => isMmo ? c.owner === d.user : (!c.owner || c.owner === d.user));
 
-        // â”€â”€ Sync currentAct from hero progression in MMO or server room state â”€â”€
+        // ── Sync currentAct from hero progression in MMO or server room state ──
         const activeHeroAct = myHeroes[0]?.act;
         const serverAct = isMmo ? (activeHeroAct || d.room.state.act || 1) : (d.room.state.act || (d.room.state.location + 1));
         if ([1, 2, 3].includes(serverAct)) {
@@ -771,8 +771,8 @@ export default function Game() {
 
                 setRoom((prev) => {
                   if (!prev) return prev;
-                  // Se o personagem nÃ£o existe no nosso estado, isso significa que perdemos um SYNC_SNAPSHOT.
-                  // Precisamos forÃ§ar o carregamento do banco de dados para puxar sua ficha completa.
+                  // Se o personagem não existe no nosso estado, isso significa que perdemos um SYNC_SNAPSHOT.
+                  // Precisamos forçar o carregamento do banco de dados para puxar sua ficha completa.
                   if (!prev.state.characters.some(c => c.id === msg.characterId)) {
                     void load(roomId);
                     return prev;
@@ -842,7 +842,7 @@ export default function Game() {
                     x: posX,
                     y: posY,
                     text: msg.attackResult.hit
-                      ? (msg.attackResult.isCrit ? `CRÃTICO! -${msg.attackResult.damage}` : `-${msg.attackResult.damage}`)
+                      ? (msg.attackResult.isCrit ? `CRÍTICO! -${msg.attackResult.damage}` : `-${msg.attackResult.damage}`)
                       : 'ERROU!',
                     type: msg.attackResult.isCrit ? 'crit' : msg.attackResult.hit ? 'damage' : 'miss'
                   };
@@ -1036,7 +1036,7 @@ export default function Game() {
         }
         return d;
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'NÃ£o foi possÃ­vel salvar.');
+        setError(e instanceof Error ? e.message : 'Não foi possível salvar.');
         if (a.action === 'move') {
           void load(roomRef.current?.id);
         }
@@ -1077,7 +1077,7 @@ export default function Game() {
       if (!customText) setMessage('');
       await load(curRoom?.id);
     } catch (e) {
-      console.warn('NarraÃ§Ã£o offline/aviso:', e);
+      console.warn('Narração offline/aviso:', e);
       await load(roomRef.current?.id);
     } finally {
       setBusy(false);
@@ -1257,7 +1257,7 @@ export default function Game() {
         try { playSfx('level'); } catch {}
         void narrate(
           '',
-          `ðŸ† [VitÃ³ria no Andar ${dungeonFloor.floorNumber}] O GuardiÃ£o do Andar foi Derrotado! A Escadaria das Profundezas foi Aberta!`
+          `🏆 [Vitória no Andar ${dungeonFloor.floorNumber}] O Guardião do Andar foi Derrotado! A Escadaria das Profundezas foi Aberta!`
         );
         setShowExtractionModal(true);
       } else {
@@ -1268,7 +1268,7 @@ export default function Game() {
             );
             if (!hasAlive) {
               room.cleared = true;
-              void narrate('', `âš”ï¸ ${room.name}: As sentinelas foram derrotadas! Sala segura.`);
+              void narrate('', `⚔️ ${room.name}: As sentinelas foram derrotadas! Sala segura.`);
             }
           }
         }
@@ -1348,7 +1348,7 @@ export default function Game() {
     return () => clearInterval(interval);
   }, [room?.id]);
 
-  // Memoized 3D dice dismissal â€” fires pending VFX AFTER dice disappears
+  // Memoized 3D dice dismissal — fires pending VFX AFTER dice disappears
   const handleDiceComplete = useCallback(() => {
     setCurrentDiceRoll(null);
 
@@ -1623,7 +1623,7 @@ export default function Game() {
   };
 
   // EXECUTE COMBAT ATTACK FLOW - SERVER AUTHORITATIVE RESOLUTION
-  // Sequence: Action Choice â†’ Server Roll â†’ Dice 3D â†’ (dice dismiss) â†’ Projectile VFX â†’ Floating Text
+  // Sequence: Action Choice → Server Roll → Dice 3D → (dice dismiss) → Projectile VFX → Floating Text
   const handleExecuteAttack = async (targetId?: string) => {
     if (busy || !active || !state) return;
     const living = state.enemies.filter((e) => e.hp > 0);
@@ -1641,9 +1641,9 @@ export default function Game() {
     // Determine projectile VFX type based on weapon/spell name
     let pType: ProjectileVfx['type'] = 'arrow';
     const actionName = (curTargeting?.name || active.weapon || '').toLowerCase();
-    if (actionName.includes('raio de fogo') || actionName.includes('fogo') || actionName.includes('flame') || actionName.includes('mÃ£os flamejantes')) {
+    if (actionName.includes('raio de fogo') || actionName.includes('fogo') || actionName.includes('flame') || actionName.includes('mãos flamejantes')) {
       pType = 'fire_bolt';
-    } else if (actionName.includes('mÃ­sseis') || actionName.includes('mÃ¡gico') || actionName.includes('missile')) {
+    } else if (actionName.includes('mísseis') || actionName.includes('mágico') || actionName.includes('missile')) {
       pType = 'magic_missile';
     } else if (actionName.includes('gelo') || actionName.includes('frost')) {
       pType = 'frost_ray';
@@ -1661,7 +1661,7 @@ export default function Game() {
     }
 
     const dist = Math.max(Math.abs(active.x - target.x), Math.abs(active.y - target.y));
-    const isMelee = (curTargeting?.rangeSquares || 1) <= 1.5 && !actionName.includes('arco') && !actionName.includes('besta') && !actionName.includes('raio') && !actionName.includes('fogo') && !actionName.includes('mÃ¡gico') && !actionName.includes('eldritch') && !actionName.includes('sagrad') && !actionName.includes('gelo');
+    const isMelee = (curTargeting?.rangeSquares || 1) <= 1.5 && !actionName.includes('arco') && !actionName.includes('besta') && !actionName.includes('raio') && !actionName.includes('fogo') && !actionName.includes('mágico') && !actionName.includes('eldritch') && !actionName.includes('sagrad') && !actionName.includes('gelo');
     if (isMelee && dist > 1) {
       setError(`Alvo fora do alcance corpo a corpo (${dist} quadrados / ${(dist * 1.5).toFixed(1)}m). Aproxime-se a 1 quadrado (1.5m) de ${target.name} para desferir o golpe!`);
       return;
@@ -1712,7 +1712,7 @@ export default function Game() {
         id: crypto.randomUUID(),
         x: posX,
         y: posY,
-        text: r.hit ? (r.isCrit ? `CRÃTICO! -${r.damage}` : `-${r.damage}`) : 'ERROU!',
+        text: r.hit ? (r.isCrit ? `CRÍTICO! -${r.damage}` : `-${r.damage}`) : 'ERROU!',
         type: r.isCrit ? 'crit' : r.hit ? 'damage' : 'miss'
       };
 
@@ -1724,17 +1724,17 @@ export default function Game() {
         target.name.includes('Sentinela') ||
         target.name.includes('Lorde') ||
         target.name.includes('Wyrmling') ||
-        target.name.includes('GuardiÃ£o') ||
+        target.name.includes('Guardião') ||
         target.name.includes('Alfa');
       const isFatal = r.hpAfter <= 0;
       const shouldNarrate = r.isCrit || (isFatal && isBossOrElite);
 
       const narrateMessage = shouldNarrate
         ? (r.isCrit && isFatal
-            ? `GOLPE CRÃTICO FATAL! ${active.name} desferiu um acerto devastador que eliminou ${target.name} com ${r.damage} de dano!`
+            ? `GOLPE CRÍTICO FATAL! ${active.name} desferiu um acerto devastador que eliminou ${target.name} com ${r.damage} de dano!`
             : r.isCrit
-            ? `GOLPE CRÃTICO! ${active.name} acerta um ponto vital em ${target.name} causando ${r.damage} de dano estrondoso!`
-            : `VITÃ“RIA CONTRA O CHEFE! O inimigo temÃ­vel ${target.name} tombou diante de ${active.name}!`)
+            ? `GOLPE CRÍTICO! ${active.name} acerta um ponto vital em ${target.name} causando ${r.damage} de dano estrondoso!`
+            : `VITÓRIA CONTRA O CHEFE! O inimigo temível ${target.name} tombou diante de ${active.name}!`)
         : '';
 
       // Queue VFX to fire when dice roll dismisses
@@ -1877,7 +1877,7 @@ export default function Game() {
         });
       }, 700);
 
-      void narrate('', `${active.name} consumiu ${itemId.includes('maior') ? 'PoÃ§Ã£o de Cura Maior' : 'PoÃ§Ã£o de Cura'} em ${target.name}, restaurando ${hr.healAmount} PV!`);
+      void narrate('', `${active.name} consumiu ${itemId.includes('maior') ? 'Poção de Cura Maior' : 'Poção de Cura'} em ${target.name}, restaurando ${hr.healAmount} PV!`);
     }
   };
 
@@ -1888,12 +1888,12 @@ export default function Game() {
       action: 'check',
       character: active.id,
       ability: 3,
-      skill: 'InvestigaÃ§Ã£o',
+      skill: 'Investigação',
       label: 'Investigar os arredores',
       mode: 'normal'
     }).then((res) => {
       if (res) {
-        void narrate('', `${active.name} investiga meticulosamente a Ã¡rea em busca de segredos, armadilhas e pistas.`);
+        void narrate('', `${active.name} investiga meticulosamente a área em busca de segredos, armadilhas e pistas.`);
       }
     });
   };
@@ -1902,7 +1902,7 @@ export default function Game() {
     if (!active) return;
     void narrate(
       '',
-      `${active.name} examina as construÃ§Ãµes de pedra, a ponte de madeira rÃºstica e as Ã¡guas do riacho de Vila do Rio Verde.`
+      `${active.name} examina as construções de pedra, a ponte de madeira rústica e as águas do riacho de Vila do Rio Verde.`
     );
   };
 
@@ -2037,69 +2037,69 @@ export default function Game() {
 
       if (isDoran) {
         if (qp.doran_talked) {
-          dialogText = 'A bÃªnÃ§Ã£o sagrada de Valdoria jÃ¡ foi concedida ao seu grupo, bravos aventureiros! Consultem a Alquimista Elenor na oficina para receberem poÃ§Ãµes de cura e o CapitÃ£o Kaelen na ponte para autorizaÃ§Ã£o dos portÃµes.';
+          dialogText = 'A bênção sagrada de Valdoria já foi concedida ao seu grupo, bravos aventureiros! Consultem a Alquimista Elenor na oficina para receberem poções de cura e o Capitão Kaelen na ponte para autorização dos portões.';
           options = [
-            { label: 'ðŸŒ¿ Ir consultar a Alquimista Elenor agora', actionText: 'TALK_ELENOR' },
-            { label: 'ðŸ›¡ï¸ Apresentar-se ao CapitÃ£o Kaelen na ponte', actionText: 'TALK_KAELEN' },
-            { label: 'AgradeÃ§o as sÃ¡bias palavras, AnciÃ£o Doran.', actionText: 'O herÃ³i reafirma sua determinaÃ§Ã£o ao AnciÃ£o Doran.' }
+            { label: '🌿 Ir consultar a Alquimista Elenor agora', actionText: 'TALK_ELENOR' },
+            { label: '🛡️ Apresentar-se ao Capitão Kaelen na ponte', actionText: 'TALK_KAELEN' },
+            { label: 'Agradeço as sábias palavras, Ancião Doran.', actionText: 'O herói reafirma sua determinação ao Ancião Doran.' }
           ];
         } else {
-          dialogText = 'Criaturas feitas de cinzas e rancor espreitam alÃ©m dos nossos muros. Como AnciÃ£o de Vila do Rio Verde, rogo a proteÃ§Ã£o dos deuses sobre vocÃªs. VÃ£o e expurguem a escuridÃ£o!';
+          dialogText = 'Criaturas feitas de cinzas e rancor espreitam além dos nossos muros. Como Ancião de Vila do Rio Verde, rogo a proteção dos deuses sobre vocês. Vão e expurguem a escuridão!';
           options = [
-            { label: 'Aceito a missÃ£o, AnciÃ£o Doran. O que nos aguarda na floresta?', actionText: `Pergunta ao AnciÃ£o Doran sobre o selo rompido e as criaturas de cinzas.` },
-            { label: 'Conceda a bÃªnÃ§Ã£o de Valdoria para a nossa expediÃ§Ã£o.', actionText: `Pede a bÃªnÃ§Ã£o da vila e conselhos de sobrevivÃªncia a Doran.` },
-            { label: 'Conversarei com Elenor e Kaelen antes de partir.', actionText: `Agradece ao AnciÃ£o e prepara-se com a guarda da vila.` }
+            { label: 'Aceito a missão, Ancião Doran. O que nos aguarda na floresta?', actionText: `Pergunta ao Ancião Doran sobre o selo rompido e as criaturas de cinzas.` },
+            { label: 'Conceda a bênção de Valdoria para a nossa expedição.', actionText: `Pede a bênção da vila e conselhos de sobrevivência a Doran.` },
+            { label: 'Conversarei com Elenor e Kaelen antes de partir.', actionText: `Agradece ao Ancião e prepara-se com a guarda da vila.` }
           ];
         }
       } else if (isElenor) {
         if (!qp.doran_talked) {
-          dialogText = 'SaudaÃ§Ãµes, viajante! Antes de adquirir elixires arcanos, fale com o AnciÃ£o Doran na praÃ§a central para receber a bÃªnÃ§Ã£o e a incumbÃªncia da vila.';
+          dialogText = 'Saudações, viajante! Antes de adquirir elixires arcanos, fale com o Ancião Doran na praça central para receber a bênção e a incumbência da vila.';
           options = [
-            { label: 'ðŸ•Šï¸ Procurar o AnciÃ£o Doran na praÃ§a', actionText: 'TALK_DORAN' },
-            { label: 'ðŸ›’ Abrir EmpÃ³rio AlquÃ­mico (Comprar & Vender)', actionText: 'OPEN_SHOP_ELENOR' }
+            { label: '🕊️ Procurar o Ancião Doran na praça', actionText: 'TALK_DORAN' },
+            { label: '🛒 Abrir Empório Alquímico (Comprar & Vender)', actionText: 'OPEN_SHOP_ELENOR' }
           ];
         } else if (qp.elenor_talked) {
-          dialogText = 'As provisÃµes e PoÃ§Ãµes de Cura jÃ¡ foram entregues ao seu grupo. Apressem-se ao CapitÃ£o Kaelen na ponte da vila para abrir os portÃµes!';
+          dialogText = 'As provisões e Poções de Cura já foram entregues ao seu grupo. Apressem-se ao Capitão Kaelen na ponte da vila para abrir os portões!';
           options = [
-            { label: 'ðŸ›¡ï¸ Falar com CapitÃ£o Kaelen na ponte', actionText: 'TALK_KAELEN' },
-            { label: 'ðŸ›’ Abrir EmpÃ³rio AlquÃ­mico (Comprar & Vender)', actionText: 'OPEN_SHOP_ELENOR' },
-            { label: 'Como usar as poÃ§Ãµes durante o combate sob regras 5e?', actionText: `Pergunta a Elenor como administrar poÃ§Ãµes como 1 AÃ§Ã£o de combate.` }
+            { label: '🛡️ Falar com Capitão Kaelen na ponte', actionText: 'TALK_KAELEN' },
+            { label: '🛒 Abrir Empório Alquímico (Comprar & Vender)', actionText: 'OPEN_SHOP_ELENOR' },
+            { label: 'Como usar as poções durante o combate sob regras 5e?', actionText: `Pergunta a Elenor como administrar poções como 1 Ação de combate.` }
           ];
         } else {
-          dialogText = 'Doran avisou-me de sua expediÃ§Ã£o sagrada! Preparei elixires destilados das raÃ­zes de Valdoria. Tomem estas PoÃ§Ãµes de Cura para sobreviverem aos combates!';
+          dialogText = 'Doran avisou-me de sua expedição sagrada! Preparei elixires destilados das raízes de Valdoria. Tomem estas Poções de Cura para sobreviverem aos combates!';
           options = [
-            { label: 'Receber PoÃ§Ãµes de Cura e marchar para o CapitÃ£o Kaelen', actionText: 'TALK_KAELEN' },
-            { label: 'ðŸ›’ Abrir EmpÃ³rio AlquÃ­mico (Comprar & Vender)', actionText: 'OPEN_SHOP_ELENOR' },
-            { label: 'Como usar as poÃ§Ãµes durante o combate sob regras 5e?', actionText: `Pergunta a Elenor como administrar poÃ§Ãµes como 1 AÃ§Ã£o de combate.` }
+            { label: 'Receber Poções de Cura e marchar para o Capitão Kaelen', actionText: 'TALK_KAELEN' },
+            { label: '🛒 Abrir Empório Alquímico (Comprar & Vender)', actionText: 'OPEN_SHOP_ELENOR' },
+            { label: 'Como usar as poções durante o combate sob regras 5e?', actionText: `Pergunta a Elenor como administrar poções como 1 Ação de combate.` }
           ];
         }
       } else if (isKaelen) {
         if (!qp.elenor_talked) {
-          dialogText = 'Alto lÃ¡! NÃ£o posso autorizar a abertura dos portÃµes sem que o grupo tenha se abastecido de PoÃ§Ãµes de Cura com a Alquimista Elenor.';
+          dialogText = 'Alto lá! Não posso autorizar a abertura dos portões sem que o grupo tenha se abastecido de Poções de Cura com a Alquimista Elenor.';
           options = [
-            { label: 'ðŸŒ¿ Ir falar com a Alquimista Elenor', actionText: 'TALK_ELENOR' },
-            { label: 'ðŸ›’ Abrir Arsenal & Ferraria (Equipamentos 5e)', actionText: 'OPEN_SHOP_KAELEN' }
+            { label: '🌿 Ir falar com a Alquimista Elenor', actionText: 'TALK_ELENOR' },
+            { label: '🛒 Abrir Arsenal & Ferraria (Equipamentos 5e)', actionText: 'OPEN_SHOP_KAELEN' }
           ];
         } else if (qp.kaelen_talked) {
-          dialogText = 'Os portÃµes da ponte estÃ£o abertos para vocÃªs! A trilha da Floresta dos Sussurros conduz ao Menir Sagrado. Destruam a Sentinela de Cinzas!';
+          dialogText = 'Os portões da ponte estão abertos para vocês! A trilha da Floresta dos Sussurros conduz ao Menir Sagrado. Destruam a Sentinela de Cinzas!';
           options = [
-            { label: 'ðŸŒ² Marchar imediatamente para a Floresta dos Sussurros (Viajar)', actionText: 'TRAVEL_FOREST' },
-            { label: 'ðŸ›’ Abrir Arsenal & Ferraria (Equipamentos 5e)', actionText: 'OPEN_SHOP_KAELEN' },
-            { label: 'Quais sÃ£o as regras de posicionamento e cobertura?', actionText: `Pede instruÃ§Ãµes militares sobre terreno e regras de 1 AÃ§Ã£o em combate D&D 5e.` }
+            { label: '🌲 Marchar imediatamente para a Floresta dos Sussurros (Viajar)', actionText: 'TRAVEL_FOREST' },
+            { label: '🛒 Abrir Arsenal & Ferraria (Equipamentos 5e)', actionText: 'OPEN_SHOP_KAELEN' },
+            { label: 'Quais são as regras de posicionamento e cobertura?', actionText: `Pede instruções militares sobre terreno e regras de 1 Ação em combate D&D 5e.` }
           ];
         } else {
-          dialogText = 'Vejo que receberam a bÃªnÃ§Ã£o de Doran e as poÃ§Ãµes de Elenor! A guarda confia na bravura de vocÃªs. Concedo autorizaÃ§Ã£o para abrir os portÃµes da ponte!';
+          dialogText = 'Vejo que receberam a bênção de Doran e as poções de Elenor! A guarda confia na bravura de vocês. Concedo autorização para abrir os portões da ponte!';
           options = [
-            { label: 'ðŸŒ² Marchar para a Floresta dos Sussurros (Viajar)', actionText: 'TRAVEL_FOREST' },
-            { label: 'ðŸ›’ Abrir Arsenal & Ferraria (Equipamentos 5e)', actionText: 'OPEN_SHOP_KAELEN' },
-            { label: 'Quais sÃ£o as regras de posicionamento e cobertura?', actionText: `Pede instruÃ§Ãµes militares sobre terreno e regras de 1 AÃ§Ã£o em combate D&D 5e.` }
+            { label: '🌲 Marchar para a Floresta dos Sussurros (Viajar)', actionText: 'TRAVEL_FOREST' },
+            { label: '🛒 Abrir Arsenal & Ferraria (Equipamentos 5e)', actionText: 'OPEN_SHOP_KAELEN' },
+            { label: 'Quais são as regras de posicionamento e cobertura?', actionText: `Pede instruções militares sobre terreno e regras de 1 Ação em combate D&D 5e.` }
           ];
         }
       } else {
         options = [
-          { label: 'O que vocÃª sabe sobre os arredores?', actionText: `Pergunta sobre a regiÃ£o a ${chosen.name}.` },
-          { label: 'Como posso ajudÃ¡-lo?', actionText: `Oferece auxÃ­lio a ${chosen.name}.` },
-          { label: 'AgradeÃ§o, continuarei explorando.', actionText: `Despede-se de ${chosen.name}.` }
+          { label: 'O que você sabe sobre os arredores?', actionText: `Pergunta sobre a região a ${chosen.name}.` },
+          { label: 'Como posso ajudá-lo?', actionText: `Oferece auxílio a ${chosen.name}.` },
+          { label: 'Agradeço, continuarei explorando.', actionText: `Despede-se de ${chosen.name}.` }
         ];
       }
 
@@ -2108,7 +2108,7 @@ export default function Game() {
         action: 'questStep',
         character: active?.id,
         step: `${chosen.id}_talked`,
-        logText: `[Grupo] ${active?.name || 'O herÃ³i'} conversou com ${chosen.name}.`
+        logText: `[Grupo] ${active?.name || 'O herói'} conversou com ${chosen.name}.`
       });
 
       // If talking to Elenor, grant 2 healing potions to active hero if not already present
@@ -2148,7 +2148,7 @@ export default function Game() {
   const handleInteractObject = async (type: string, x: number, y: number) => {
     if (!active) return;
 
-    // Se estiver em uma expediÃ§Ã£o nas Catacumbas com andar ativo
+    // Se estiver em uma expedição nas Catacumbas com andar ativo
     if (battlemapBiome === 'dungeon' && dungeonFloor) {
       const result = interactDungeonObject(dungeonFloor, x, y, active);
 
@@ -2179,7 +2179,7 @@ export default function Game() {
         const curGrid = dungeonSize;
         const posX = ((x + 0.5) / curGrid) * 100;
         const posY = ((y + 0.5) / curGrid) * 100;
-        const floatText = result.goldFound ? `+${result.goldFound} PO ðŸª™` : 'BaÃº Saqueado!';
+        const floatText = result.goldFound ? `+${result.goldFound} PO 🪙` : 'Baú Saqueado!';
         setFloatingTexts((prev) => [...prev, { id: crypto.randomUUID(), x: posX, y: posY, text: floatText, type: 'loot' }]);
 
         if (dungeonExpedition && result.goldFound) {
@@ -2207,7 +2207,7 @@ export default function Game() {
         const curGrid = dungeonSize;
         const posX = ((x + 0.5) / curGrid) * 100;
         const posY = ((y + 0.5) / curGrid) * 100;
-        setFloatingTexts((prev) => [...prev, { id: crypto.randomUUID(), x: posX, y: posY, text: `+${result.hpRestored || 10} PV ðŸŒ¿`, type: 'heal' }]);
+        setFloatingTexts((prev) => [...prev, { id: crypto.randomUUID(), x: posX, y: posY, text: `+${result.hpRestored || 10} PV 🌿`, type: 'heal' }]);
         void narrate('', result.message);
         return;
       }
@@ -2239,20 +2239,20 @@ export default function Game() {
       return;
     }
 
-    // Comportamento padrÃ£o em outras Ã¡reas / vila
+    // Comportamento padrão em outras áreas / vila
     if (type === 'chest') {
-      void narrate('', `${active.name} abre as caixas de suprimentos nas coordenadas [${String.fromCharCode(65 + x)}${y + 1}] e encontra provisÃµes e poÃ§Ãµes de cura!`);
+      void narrate('', `${active.name} abre as caixas de suprimentos nas coordenadas [${String.fromCharCode(65 + x)}${y + 1}] e encontra provisões e poções de cura!`);
     } else if (type === 'shrine') {
-      void narrate('', `${active.name} aproxima-se do monÃ³lito sagrado, sentindo as correntes arcanas que protegem as terras de Valdoria.`);
+      void narrate('', `${active.name} aproxima-se do monólito sagrado, sentindo as correntes arcanas que protegem as terras de Valdoria.`);
     } else if (type === 'well') {
-      void narrate('', `${active.name} retira Ã¡gua fresca do poÃ§o de pedra da vila, recompondo o fÃ´lego.`);
+      void narrate('', `${active.name} retira água fresca do poço de pedra da vila, recompondo o fôlego.`);
     } else if (type === 'stairs') {
       if (battlemapBiome === 'dungeon' && !dungeonFloor) {
         setShowExpeditionEntryModal(true);
       } else if (isActBossDefeated) {
         void handleAdvanceAct();
       } else {
-        void narrate('', `${active.name} aproxima-se da escadaria, mas guardas e selos impedem a passagem enquanto a missÃ£o atual nÃ£o for concluÃ­da.`);
+        void narrate('', `${active.name} aproxima-se da escadaria, mas guardas e selos impedem a passagem enquanto a missão atual não for concluída.`);
       }
     }
   };
@@ -2267,7 +2267,7 @@ export default function Game() {
       : b === 'dungeon' ? 3
       : b === 'canyon' ? 4
       : 5;
-    const destName = locations[locIdx]?.name || 'Novo TerritÃ³rio';
+    const destName = locations[locIdx]?.name || 'Novo Território';
     const ok = await action({ action: 'location', location: locIdx, biome: b, character: active.id });
     if (ok) {
       setBattlemapBiome(b);
@@ -2293,7 +2293,7 @@ export default function Game() {
       expedition: newExp
     });
 
-    // Mover o herÃ³i para o ponto de spawn seguro do Andar 1 (Entrada do SantuÃ¡rio)
+    // Mover o herói para o ponto de spawn seguro do Andar 1 (Entrada do Santuário)
     const spawn = newExp.floorHistory[1].spawnHero;
     await action({
       action: 'move',
@@ -2307,7 +2307,7 @@ export default function Game() {
     try { playSfx('door'); } catch {}
     void narrate(
       '',
-      `ðŸ’€ [Catacumbas Profundas] ${active.name} iniciou uma ExpediÃ§Ã£o no Andar 1 (${expMode === 'solo' ? 'Modo Solo' : 'Modo Grupo'}). Explore as salas, evite armadilhas e derrote o GuardiÃ£o Chefe para destrancar a escadaria!`
+      `💀 [Catacumbas Profundas] ${active.name} iniciou uma Expedição no Andar 1 (${expMode === 'solo' ? 'Modo Solo' : 'Modo Grupo'}). Explore as salas, evite armadilhas e derrote o Guardião Chefe para destrancar a escadaria!`
     );
   };
 
@@ -2337,7 +2337,7 @@ export default function Game() {
 
     void narrate(
       '',
-      'ðŸ† ExtraÃ§Ã£o Bem-Sucedida! ' +
+      '🏆 Extração Bem-Sucedida! ' +
         active.name +
         ' retornou com ' +
         gold +
@@ -2385,7 +2385,7 @@ export default function Game() {
     setDungeonFloor(nextFloor);
     setShowExtractionModal(false);
 
-    // Mover herÃ³i para a entrada do novo andar
+    // Mover herói para a entrada do novo andar
     await action({
       action: 'move',
       character: active.id,
@@ -2398,7 +2398,7 @@ export default function Game() {
     try { playSfx('door'); } catch {}
     void narrate(
       '',
-      `ðŸ•¯ï¸ O grupo desceu as escadas de pedra para o Andar ${nextFloorNum}! O ar torna-se mais rarefeito e criaturas mais perigosas espreitam na nÃ©voa.`
+      `🕯️ O grupo desceu as escadas de pedra para o Andar ${nextFloorNum}! O ar torna-se mais rarefeito e criaturas mais perigosas espreitam na névoa.`
     );
   };
 
@@ -2801,7 +2801,7 @@ export default function Game() {
 
     void narrate(
       '',
-      'ðŸ”¥ Ignisrax aguarda no coraÃ§Ã£o da Cratera MagmÃ¡tica. O confronto final agora usa o mesmo motor de combate e progressÃ£o do restante de Valdoria.'
+      '🔥 Ignisrax aguarda no coração da Cratera Magmática. O confronto final agora usa o mesmo motor de combate e progressão do restante de Valdoria.'
     );
   };
 
@@ -2814,7 +2814,7 @@ export default function Game() {
             <div className="brand flex items-center gap-3">
               <Dices size={30} className="text-amber-400" />
               <span className="font-serif font-black tracking-wider text-amber-200">
-                CRÃ”NICAS<small className="block text-[10px] tracking-widest text-zinc-400">DO VAZIO</small>
+                CRÔNICAS<small className="block text-[10px] tracking-widest text-zinc-400">DO VAZIO</small>
               </span>
             </div>
             <p className="eyebrow text-xs text-amber-500/80 font-bold tracking-widest px-3 mt-4">
@@ -2837,7 +2837,7 @@ export default function Game() {
               </SidebarMenu>
             </SidebarContent>
             <div className="nav-bottom mt-auto p-4 border-t border-zinc-800 flex flex-col gap-1.5">
-              <span className="edition block text-center mb-1">5e â€¢ REGRAS 2024</span>
+              <span className="edition block text-center mb-1">5e • REGRAS 2024</span>
               <button className="text-button w-full justify-center" onClick={() => setRoomDialog(true)}>
                 <Plus size={15} /> Minhas mesas
               </button>
@@ -2852,7 +2852,7 @@ export default function Game() {
           </Sidebar>
         )}
 
-        {/* Mobile Header (Apenas fora de Aventura, pois Aventura tem seu prÃ³prio topo) */}
+        {/* Mobile Header (Apenas fora de Aventura, pois Aventura tem seu próprio topo) */}
         {view !== 'Aventura' && (
           <div className="md:hidden flex items-center justify-between px-3 py-2 border-b border-zinc-800 bg-[#121612] sticky top-0 z-30 shadow-md shrink-0">
           <div className="flex items-center gap-2">
@@ -2867,7 +2867,7 @@ export default function Game() {
             </button>
             <div className="flex flex-col">
               <span className="font-serif font-black tracking-wider text-amber-200 text-xs leading-none">
-                CRÃ”NICAS <span className="text-[9px] text-zinc-400 font-mono">5e</span>
+                CRÔNICAS <span className="text-[9px] text-zinc-400 font-mono">5e</span>
               </span>
               <span className="text-[10px] text-amber-400/90 font-bold truncate max-w-[125px]">
                 {CAMPAIGN_ACTS[currentAct].title.split(':')[0]}
@@ -2887,7 +2887,7 @@ export default function Game() {
               className="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-cyan-300 border border-zinc-700 rounded-lg text-xs font-semibold flex items-center gap-1 shadow active:scale-95 transition-transform"
             >
               <ScrollText size={13} className="text-cyan-400" />
-              <span>MissÃµes</span>
+              <span>Missões</span>
             </button>
             <button
               onClick={() => setRoomDialog(true)}
@@ -2910,14 +2910,14 @@ export default function Game() {
         {/* WORKSPACE / GAMEPLAY CANVAS */}
         <section className={`workspace flex-1 h-full min-h-0 overflow-hidden flex flex-col ${view === 'Aventura' ? 'p-0' : 'p-1 sm:p-2.5'} relative min-w-0`}>
           {/* Header (Desktop - Apenas fora da tela de Aventura) */}
-          {/* Header (Exibido nas telas de Personagens, CompÃªndio, Atlas e Mestre) */}
+          {/* Header (Exibido nas telas de Personagens, Compêndio, Atlas e Mestre) */}
           {view !== 'Aventura' && (
             <header className="flex flex-wrap items-center justify-between border-b border-zinc-800/80 pb-2.5 mb-3 shrink-0 gap-3 px-2 sm:px-4 bg-[#0a0f0d]/90 backdrop-blur-md rounded-xl">
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2 text-xs sm:text-sm text-zinc-400">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                  <span className="font-serif font-black tracking-wide text-zinc-200">CrÃ´nicas do Vazio</span>
-                  <span className="text-zinc-600 font-mono">â€¢</span>
+                  <span className="font-serif font-black tracking-wide text-zinc-200">Crônicas do Vazio</span>
+                  <span className="text-zinc-600 font-mono">•</span>
                   <strong className="text-amber-300 font-bold uppercase tracking-wider text-xs sm:text-sm">
                     {view}
                   </strong>
@@ -2957,7 +2957,7 @@ export default function Game() {
                 <button
                   onClick={() => setRoomDialog(true)}
                   className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-zinc-300 bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 cursor-pointer"
-                  title="Gerenciar mesas e instÃ¢ncias"
+                  title="Gerenciar mesas e instâncias"
                 >
                   <Users size={13} className="text-emerald-400" />
                   <span className="hidden sm:inline">{room?.id === 'mmo-world-village' ? 'Mundo MMO' : (room?.name || 'Mesas')}</span>
@@ -2965,15 +2965,15 @@ export default function Game() {
                 <button
                   onClick={() => setIsSettingsOpen(true)}
                   className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-amber-300 bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 cursor-pointer"
-                  title="ConfiguraÃ§Ãµes de Ãudio e Jogo"
+                  title="Configurações de Áudio e Jogo"
                 >
                   <Settings size={13} />
-                  <span>OpÃ§Ãµes</span>
+                  <span>Opções</span>
                 </button>
                 <button
                   onClick={() => setIsMapEditorOpen(true)}
                   className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-sky-400 bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 cursor-pointer"
-                  title="Gerador de Mapas IA e ColisÃ£o"
+                  title="Gerador de Mapas IA e Colisão"
                 >
                   <Compass size={13} />
                   <span>Mapas IA</span>
@@ -2981,7 +2981,7 @@ export default function Game() {
                 <button
                   onClick={() => setView('Aventura')}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 via-yellow-500 to-amber-600 hover:from-amber-500 hover:to-yellow-400 text-black font-black text-xs uppercase tracking-wider shadow-lg shadow-amber-950/40 border border-amber-400/60 transition-all active:scale-95 cursor-pointer"
-                  title="Retornar para o mapa tÃ¡tico da aventura"
+                  title="Retornar para o mapa tático da aventura"
                 >
                   <Swords size={14} className="stroke-[3]" />
                   <span>Retornar ao Jogo</span>
@@ -3111,20 +3111,20 @@ worldFlags={active?.worldFlags || state?.worldFlags}
               setSelected(heroId);
               setShowCharacterCreator(false);
               setView('Aventura');
-              void narrate('', `${newHero.name}, um ${newHero.species} ${newHero.className} de nÃ­vel ${newHero.level}, juntou-se Ã  aventura em Vila do Rio Verde!`);
+              void narrate('', `${newHero.name}, um ${newHero.species} ${newHero.className} de nível ${newHero.level}, juntou-se à aventura em Vila do Rio Verde!`);
             }}
           />
 
-          {/* â•â•â• WORLD SELECTION DIALOG â•â•â• */}
-          {/* Shows before character creator for first-time users â€” clear Solo vs MMO choice */}
+          {/* ═══ WORLD SELECTION DIALOG ═══ */}
+          {/* Shows before character creator for first-time users — clear Solo vs MMO choice */}
           <Dialog open={showWorldSelector} onOpenChange={setShowWorldSelector}>
             <DialogContent className="max-w-lg">
               <DialogHeader>
                 <DialogTitle className="text-center text-xl font-serif text-amber-200">
-                  âš”ï¸ Escolha seu Mundo
+                  ⚔️ Escolha seu Mundo
                 </DialogTitle>
                 <DialogDescription className="text-center text-zinc-400 text-sm">
-                  Como deseja jogar CrÃ´nicas do Vazio?
+                  Como deseja jogar Crônicas do Vazio?
                 </DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-3 mt-2">
@@ -3138,14 +3138,14 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                   }}
                 >
                   <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-400 flex items-center justify-center text-3xl shrink-0 shadow-lg group-hover:scale-110 transition-transform">
-                    âš”ï¸
+                    ⚔️
                   </div>
                   <div className="flex-1 min-w-0">
                     <strong className="block text-sm font-serif text-amber-200 group-hover:text-amber-100">
                       Campanha Solo
                     </strong>
                     <span className="text-[11px] text-zinc-400 block leading-tight mt-0.5">
-                      Aventura privada com 3 atos, NPCs, exploraÃ§Ã£o e combate tÃ¡tico. Seu prÃ³prio mundo.
+                      Aventura privada com 3 atos, NPCs, exploração e combate tático. Seu próprio mundo.
                     </span>
                   </div>
                   <ChevronRight size={20} className="text-amber-400 shrink-0 group-hover:translate-x-1 transition-transform" />
@@ -3162,7 +3162,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                   }}
                 >
                   <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-400 flex items-center justify-center text-3xl shrink-0 shadow-lg group-hover:scale-110 transition-transform">
-                    ðŸŒ
+                    🌍
                   </div>
                   <div className="flex-1 min-w-0">
                     <strong className="block text-sm font-serif text-emerald-200 group-hover:text-emerald-100">
@@ -3194,7 +3194,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
               const newSeed = Date.now();
               setDungeonSeed(newSeed);
               setProceduralDungeon(generateProceduralDungeon(currentAct, dungeonSize, newSeed));
-              void narrate('', 'Uma nova Ã¡rea da masmorra foi revelada sob a nÃ©voa arcaica.');
+              void narrate('', 'Uma nova área da masmorra foi revelada sob a névoa arcaica.');
             }}
             onOpenCharacterCreator={() => setShowCharacterCreator(true)}
             onOpenInventory={() => setShowInventory(true)}
@@ -3213,17 +3213,17 @@ worldFlags={active?.worldFlags || state?.worldFlags}
           {/* MAIN VIEW SWITCHER */}
           {loading ? (
             <div className="flex-1 flex items-center justify-center text-zinc-400 font-mono text-sm">
-              Carregando mundo de jogoâ€¦
+              Carregando mundo de jogo…
             </div>
-          ) : !room && view !== 'CompÃªndio' && view !== 'Mestre de jogo' ? (
+          ) : !room && view !== 'Compêndio' && view !== 'Mestre de jogo' ? (
             /* Welcome / No Room Selected */
             <div className="flex-1 flex flex-col items-center justify-center text-center p-6 gap-4">
               <div className="w-20 h-20 rounded-3xl bg-amber-950/40 border border-amber-500/50 flex items-center justify-center text-amber-300 shadow-2xl">
                 <Dices size={40} />
               </div>
-              <h1 className="text-3xl font-serif text-amber-200">Bem-vindo a CrÃ´nicas do Vazio</h1>
+              <h1 className="text-3xl font-serif text-amber-200">Bem-vindo a Crônicas do Vazio</h1>
               <p className="text-zinc-400 max-w-md text-sm leading-relaxed">
-                Crie ou entre em uma mesa para iniciar a aventura com automaÃ§Ã£o de regras D&D 5e e narraÃ§Ã£o rÃ¡pida da Groq por IA.
+                Crie ou entre em uma mesa para iniciar a aventura com automação de regras D&D 5e e narração rápida da Groq por IA.
               </p>
               {signedIn ? (
                 <button
@@ -3235,22 +3235,22 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                 </button>
               ) : (
                 <a className="gold-button mt-2" href="/signin-with-chatgpt?return_to=/" target="_top">
-                  Entrar e ComeÃ§ar <ChevronRight size={16} />
+                  Entrar e Começar <ChevronRight size={16} />
                 </a>
               )}
             </div>
           ) : view === 'Aventura' && room ? (
             /* --- AVENTURA: FULL-SCREEN ELECTRONIC GAME CANVAS WITH FLOATING DARK FANTASY HUD --- */
             <div className="flex-1 min-h-0 h-full w-full flex flex-col overflow-hidden bg-[#0a0d0a] relative select-none">
-              {/* â•â•â• TOP INITIATIVE RIBBON BAR (DARK CHARCOAL & VINTAGE GOLD) â•â•â• */}
+              {/* ═══ TOP INITIATIVE RIBBON BAR (DARK CHARCOAL & VINTAGE GOLD) ═══ */}
               <div className="flex items-center justify-between px-3 py-1 bg-[#101410]/95 border-b border-[#2e3a2b]/80 z-30 shrink-0 gap-2">
                 {/* Left: Quick Location & Status */}
                 <div className="flex items-center gap-2 shrink-0">
                   {room?.id === 'mmo-world-village' ? (
                     <div className="flex items-center gap-1.5">
                       <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.9)]" />
-                      <strong className="text-xs sm:text-sm font-serif text-emerald-300 truncate max-w-[130px] sm:max-w-[180px]" title="Mundo MMO PÃºblico Compartilhado">
-                        ðŸŒ Mundo MMO
+                      <strong className="text-xs sm:text-sm font-serif text-emerald-300 truncate max-w-[130px] sm:max-w-[180px]" title="Mundo MMO Público Compartilhado">
+                        🌍 Mundo MMO
                       </strong>
                       <span className="text-[10px] bg-emerald-950/90 border border-emerald-600/60 text-emerald-300 px-1.5 py-0.2 rounded-full font-mono font-bold">
                         {state?.characters?.length || 0} online
@@ -3268,12 +3268,12 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                         className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-600/80 text-[10px] text-emerald-300 font-bold transition-all shadow cursor-pointer active:scale-95"
                         title="Entrar no Mundo MMO Online com outros aventureiros"
                       >
-                        <span>ðŸŒ Mundo MMO</span>
+                        <span>🌐 Mundo MMO</span>
                       </button>
                     </div>
                   )}
                   <span className="hidden xl:inline text-[11px] text-amber-400/80 font-mono">
-                    â€¢ {CAMPAIGN_ACTS[currentAct].title.split(':')[0]}
+                    • {CAMPAIGN_ACTS[currentAct].title.split(':')[0]}
                   </span>
                 </div>
 
@@ -3300,27 +3300,27 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                 {/* Right: Biome Selector & Mobile Tab Switcher */}
                 {/* Right: Biome Selector, HUD Toggles & Mobile Tab Switcher */}
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {/* Atalho de ExpediÃ§Ã£o nas Catacumbas */}
+                  {/* Atalho de Expedição nas Catacumbas */}
                   {battlemapBiome === 'dungeon' && !dungeonFloor && (
                     <button
                       onClick={() => setShowExpeditionEntryModal(true)}
                       className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-black font-black text-xs uppercase tracking-wide shadow-[0_0_15px_rgba(245,158,11,0.6)] border border-yellow-200 animate-pulse transition-transform active:scale-95 cursor-pointer"
                       title="Adentrar as Catacumbas Profundas (Dungeon Crawler)"
                     >
-                      <span>ðŸ’€</span>
-                      <span>ExpediÃ§Ã£o Masmorra</span>
+                      <span>💀</span>
+                      <span>Expedição Masmorra</span>
                     </button>
                   )}
 
                   {dungeonFloor && dungeonExpedition && (
                     <div className="flex items-center gap-1.5 bg-amber-950/70 border border-amber-500/60 rounded-xl px-2.5 py-1">
                       <span className="text-xs font-mono font-bold text-amber-300">
-                        ðŸ’€ Andar {dungeonFloor.floorNumber} ({dungeonExpedition.mode === 'solo' ? 'Solo' : 'Grupo'})
+                        💀 Andar {dungeonFloor.floorNumber} ({dungeonExpedition.mode === 'solo' ? 'Solo' : 'Grupo'})
                       </span>
                       <button
                         onClick={() => setShowExtractionModal(true)}
                         className="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-black text-[10px] font-black uppercase cursor-pointer"
-                        title="Abrir opÃ§Ãµes de extraÃ§Ã£o ou descida"
+                        title="Abrir opções de extração ou descida"
                       >
                         Extrair / Descer
                       </button>
@@ -3333,10 +3333,10 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                       [
                         { id: 'village', label: 'Vila' },
                         { id: 'forest', label: 'Mata' },
-                        { id: 'ruins', label: 'RuÃ­nas' },
+                        { id: 'ruins', label: 'Ruínas' },
                         { id: 'dungeon', label: 'Catacumbas' },
                         { id: 'canyon', label: 'Fenda' },
-                        { id: 'lair', label: 'Covil ðŸŒ‹' }
+                        { id: 'lair', label: 'Covil 🌋' }
                       ] as const
                     ).map((b) => (
                       <button
@@ -3382,10 +3382,10 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                     <button
                       onClick={() => setShowQuests(true)}
                       className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-cyan-300 border border-zinc-700 text-xs font-semibold transition-colors"
-                      title="DiÃ¡rio de MissÃµes"
+                      title="Diário de Missões"
                     >
                       <ScrollText size={12} />
-                      <span>MissÃµes</span>
+                      <span>Missões</span>
                     </button>
 
                     <button
@@ -3400,16 +3400,16 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                     <button
                       onClick={() => setIsSettingsOpen(true)}
                       className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-zinc-700 text-xs font-semibold transition-colors"
-                      title="ConfiguraÃ§Ãµes de Ãudio e Jogo"
+                      title="Configurações de Áudio e Jogo"
                     >
                       <Settings size={12} />
-                      <span>OpÃ§Ãµes</span>
+                      <span>Opções</span>
                     </button>
 
                     <button
                       onClick={() => setIsMapEditorOpen(true)}
                       className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-sky-400 border border-zinc-700 text-xs font-semibold transition-colors"
-                      title="Gerador de Mapas IA e Editor de ColisÃ£o"
+                      title="Gerador de Mapas IA e Editor de Colisão"
                     >
                       <Compass size={12} />
                       <span>Mapas IA</span>
@@ -3446,7 +3446,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                 </div>
               </div>
 
-              {/* â•â•â• COMBAT TURN ANNOUNCEMENT BANNER (PROMINENT & UNMISTAKABLE) â•â•â• */}
+              {/* ═══ COMBAT TURN ANNOUNCEMENT BANNER (PROMINENT & UNMISTAKABLE) ═══ */}
               {state?.combat && (
                 <div className={`w-full px-4 py-1.5 flex items-center justify-between z-30 shrink-0 shadow-md border-b transition-all duration-300 ${
                   isHeroTurn
@@ -3463,8 +3463,8 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                       isHeroTurn ? 'text-amber-200' : 'text-red-200'
                     }`}>
                       {isHeroTurn
-                        ? `ðŸ›¡ï¸ SEU TURNO: ${turnEntity?.name || active?.name}`
-                        : `âš”ï¸ TURNO DO INIMIGO: ${turnEntity?.name || 'Inimigo'}`}
+                        ? `🛡️ SEU TURNO: ${turnEntity?.name || active?.name}`
+                        : `⚔️ TURNO DO INIMIGO: ${turnEntity?.name || 'Inimigo'}`}
                     </span>
                     <span className={`text-[10px] font-mono font-black px-2 py-0.5 rounded-full ${
                       isHeroTurn ? 'bg-amber-400 text-black shadow' : 'bg-red-600 text-white shadow'
@@ -3477,9 +3477,9 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                     {isHeroTurn ? (
                       <>
                         <span className={state.actionUsed ? 'text-amber-300 font-bold' : 'text-emerald-300 font-bold animate-pulse'}>
-                          {state.actionUsed ? 'â³ AÃ§Ã£o Utilizada' : 'âœ¨ 1 AÃ§Ã£o'}
+                          {state.actionUsed ? '⏳ Ação Utilizada' : '✨ 1 Ação'}
                         </span>
-                        <span className="text-zinc-500 hidden sm:inline">â€¢</span>
+                        <span className="text-zinc-500 hidden sm:inline">•</span>
                         <span className="text-cyan-300 font-bold hidden sm:inline">{active?.speed || 9}m Deslocamento</span>
                         <button
                           type="button"
@@ -3496,7 +3496,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                       </>
                     ) : (
                       <div className="flex items-center gap-2">
-                        <span className="text-zinc-400 animate-pulse">Aguardando IA do adversÃ¡rio...</span>
+                        <span className="text-zinc-400 animate-pulse">Aguardando IA do adversário...</span>
                         {owner && (
                           <button
                             type="button"
@@ -3505,9 +3505,9 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                             }}
                             disabled={busy}
                             className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-mono border border-zinc-600"
-                            title="Mestre: Pular / AvanÃ§ar Turno"
+                            title="Mestre: Pular / Avançar Turno"
                           >
-                            Pular â–¶
+                            Pular ▶
                           </button>
                         )}
                       </div>
@@ -3516,7 +3516,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                 </div>
               )}
 
-              {/* â•â•â• FULL-SCREEN GAME ARENA WITH FLOATING CRPG HUD â•â•â• */}
+              {/* ═══ FULL-SCREEN GAME ARENA WITH FLOATING CRPG HUD ═══ */}
               <div className="flex-1 min-h-0 h-full w-full relative overflow-hidden bg-[#050806]">
                 {/* 1. FULL-BLEED TACTICAL DUNGEON BOARD (Fills 100% of Screen Space) */}
                 <div className="absolute inset-0 z-0 flex items-center justify-center overflow-hidden">
@@ -3640,12 +3640,12 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                         });
                       } catch {}
 
-                      // 4. VerificaÃ§Ã£o de ExploraÃ§Ã£o de Masmorra: Salas, Segredos e Inimigos
+                      // 4. Verificação de Exploração de Masmorra: Salas, Segredos e Inimigos
                       if (battlemapBiome === 'dungeon' && dungeonFloor) {
                         const discovery = checkRoomDiscovery(dungeonFloor, finalDest.x, finalDest.y);
                         if (discovery.revealedSecretDoor) {
                           try { playSfx('door'); } catch {}
-                          void narrate('', `ðŸ‘ï¸ PercepÃ§Ã£o Passiva! ${active?.name || 'O herÃ³i'} descobriu uma passagem secreta oculta na parede de pedra!`);
+                          void narrate('', `👁️ Percepção Passiva! ${active?.name || 'O herói'} descobriu uma passagem secreta oculta na parede de pedra!`);
                         }
                         const encounter = checkRoomCombatEncounter(dungeonFloor, finalDest.x, finalDest.y);
                         if (encounter.shouldTriggerCombat && !state?.combat) {
@@ -3654,7 +3654,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                             character: heroId,
                             enemies: encounter.enemiesToFight
                           });
-                          void narrate('', `âš”ï¸ ${encounter.room?.name || 'CÃ¢mara das Catacumbas'}: Inimigos Ã  espreita atacam! Iniciando combate tÃ¡tico 5e!`);
+                          void narrate('', `⚔️ ${encounter.room?.name || 'Câmara das Catacumbas'}: Inimigos à espreita atacam! Iniciando combate tático 5e!`);
                         }
                       }
 
@@ -3746,7 +3746,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                         }, 950);
 
                         const floatId = crypto.randomUUID();
-                        const lootText = corpse.gold > 0 ? `+${corpse.gold} PO ðŸª™` : (corpse.items?.length ? `+${corpse.items[0]} âœ¨` : 'Saqueado!');
+                        const lootText = corpse.gold > 0 ? `+${corpse.gold} PO 🪙` : (corpse.items?.length ? `+${corpse.items[0]} ✨` : 'Saqueado!');
                         setFloatingTexts((prev) => [...prev, {
                           id: floatId,
                           x: posX,
@@ -3778,7 +3778,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                   />
                 </div>
 
-                {/* â•â•â• TARGETING SELECTION MODE BANNER (CRPG HIGH VISIBILITY) â•â•â• */}
+                {/* ═══ TARGETING SELECTION MODE BANNER (CRPG HIGH VISIBILITY) ═══ */}
                 {targetingAction && (
                   <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2.5 px-4 py-2 rounded-2xl bg-gradient-to-r from-red-950 via-zinc-950 to-red-950 border-2 border-red-500/90 shadow-[0_0_30px_rgba(239,68,68,0.7)] backdrop-blur-xl animate-fade-in pointer-events-auto">
                     <Crosshair size={18} className="text-red-400 animate-spin-slow shrink-0" />
@@ -3787,7 +3787,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                         ALVO: {targetingAction.name}
                       </span>
                       <span className="text-[10px] text-zinc-300 font-mono">
-                        ({targetingAction.rangeSquares * 1.5}m) â€¢ {targetingAction.targetMode === 'area'
+                        ({targetingAction.rangeSquares * 1.5}m) • {targetingAction.targetMode === 'area'
                           ? 'Selecione o centro da area'
                           : targetingAction.targetMode === 'point'
                             ? 'Selecione o destino'
@@ -3809,23 +3809,23 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                   </div>
                 )}
 
-                {/* â•â•â• CRPG DEFEAT & RESPAWN MODAL â•â•â• */}
+                {/* ═══ CRPG DEFEAT & RESPAWN MODAL ═══ */}
                 {active && active.hp <= 0 && (
                   <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-fade-in select-none">
                     <div className="relative w-full max-w-md bg-gradient-to-b from-[#1c0e0e] via-[#120808] to-[#080404] border-2 border-red-600/90 rounded-3xl p-6 sm:p-8 shadow-[0_0_50px_rgba(239,68,68,0.5)] flex flex-col items-center text-center gap-4">
                       <div className="w-16 h-16 rounded-full bg-red-950 border-2 border-red-500/80 flex items-center justify-center text-3xl shadow-[0_0_25px_rgba(239,68,68,0.8)] animate-pulse">
-                        ðŸ’€
+                        💀
                       </div>
                       <div>
                         <h2 className="text-2xl font-serif font-black text-red-200 tracking-wider uppercase">
-                          HerÃ³i Derrotado
+                          Herói Derrotado
                         </h2>
                         <p className="text-xs sm:text-sm text-zinc-300 mt-2 leading-relaxed">
-                          Seus pontos de vida chegaram a zero. Os guardas e curandeiros de Vila do Rio Verde resgatam vocÃª e o acolhem no SantuÃ¡rio Sagrado.
+                          Seus pontos de vida chegaram a zero. Os guardas e curandeiros de Vila do Rio Verde resgatam você e o acolhem no Santuário Sagrado.
                         </p>
                       </div>
                       <div className="w-full bg-black/60 border border-zinc-800 rounded-2xl p-2.5 text-xs text-amber-300 font-mono">
-                        ðŸ•Šï¸ VocÃª renascerÃ¡ na vila com os Pontos de Vida (PV) totalmente restaurados.
+                        🕊️ Você renascerá na vila com os Pontos de Vida (PV) totalmente restaurados.
                       </div>
                       <button
                         disabled={busy}
@@ -3834,13 +3834,13 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                         }}
                         className="w-full py-3 px-6 rounded-2xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 hover:from-amber-400 hover:to-yellow-300 text-black font-black text-sm tracking-wider shadow-[0_0_20px_rgba(245,158,11,0.6)] cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-2"
                       >
-                        <span>ðŸ•Šï¸ Renascer no SantuÃ¡rio da Vila</span>
+                        <span>🕊️ Renascer no Santuário da Vila</span>
                       </button>
                     </div>
                   </div>
                 )}
 
-                {/* â•â•â• FLOATING TACTICAL & OPEN WORLD COMBAT TURN CONTROLS â•â•â• */}
+                {/* ═══ FLOATING TACTICAL & OPEN WORLD COMBAT TURN CONTROLS ═══ */}
                 {!isHeroInVillage && state?.combat && isHeroInCombat ? (
                   <div className="absolute top-3 left-1/2 -translate-x-1/2 z-35 flex items-center gap-2 px-3.5 py-1.5 rounded-2xl bg-[#0b0f0b]/95 border-2 border-amber-500/90 shadow-[0_8px_32px_rgba(0,0,0,0.95)] backdrop-blur-xl animate-fade-in pointer-events-auto">
                     <div className="flex items-center gap-1.5 pr-2.5 border-r border-zinc-800 text-xs font-mono">
@@ -3855,7 +3855,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                         <div className="flex items-center gap-2">
                           <div className="flex items-center gap-1.5 text-xs font-serif font-bold text-amber-200 pr-1">
                             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
-                            <span>Sua Vez: {active?.name || 'HerÃ³i'}</span>
+                            <span>Sua Vez: {active?.name || 'Herói'}</span>
                           </div>
 
                           {/* Quick Attack Button if enemy exists */}
@@ -3881,7 +3881,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                             }}
                             disabled={busy}
                             className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-600 hover:from-amber-400 hover:to-yellow-300 text-black font-black text-xs uppercase tracking-wider shadow-[0_0_20px_rgba(245,158,11,0.7)] border-2 border-yellow-200 transition-all active:scale-95 flex items-center gap-1.5 animate-pulse cursor-pointer"
-                            title="Encerrar seu turno e passar a vez para o prÃ³ximo combatente (D&D 5e)"
+                            title="Encerrar seu turno e passar a vez para o próximo combatente (D&D 5e)"
                           >
                             <Clock size={15} className="stroke-[3] text-black" />
                             <span>PASSAR O TURNO (FIM)</span>
@@ -3890,7 +3890,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                       ) : (
                         <div className="flex items-center gap-2 text-xs">
                           <span className="text-red-300 font-serif font-bold animate-pulse">
-                            âš”ï¸ Turno de: {turnEntity?.name || 'Inimigo'}
+                            ⚔️ Turno de: {turnEntity?.name || 'Inimigo'}
                           </span>
                           {owner && (
                             <button
@@ -3900,9 +3900,9 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                               }}
                               disabled={busy}
                               className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-mono border border-zinc-600 ml-1 shadow cursor-pointer"
-                              title="Mestre: ForÃ§ar avanÃ§o de turno"
+                              title="Mestre: Forçar avanço de turno"
                             >
-                              ForÃ§ar PrÃ³ximo â–¶
+                              Forçar Próximo ▶
                             </button>
                           )}
                         </div>
@@ -3911,7 +3911,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                       /* Player in MMO watching ongoing battle */
                       <div className="flex items-center gap-2.5">
                         <span className="text-xs text-amber-200 font-serif">
-                          âš”ï¸ Batalha em Andamento ({turnEntity?.name || 'Inimigo'})
+                          ⚔️ Batalha em Andamento ({turnEntity?.name || 'Inimigo'})
                         </span>
                         <button
                           type="button"
@@ -3958,7 +3958,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                       title="Iniciar combate formal por turnos e rolar iniciativa com a party (D&D 5e)"
                     >
                       <Crown size={12} className="text-black" />
-                      <span className="hidden sm:inline">Iniciar Batalha TÃ¡tica (Iniciativa)</span>
+                      <span className="hidden sm:inline">Iniciar Batalha Tática (Iniciativa)</span>
                       <span className="sm:hidden">Iniciativa</span>
                     </button>
                   </div>
@@ -3977,12 +3977,12 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                           onClick={() => setShowGmSidebar(true)}
                           className="text-[10px] text-amber-400 hover:text-amber-200 underline font-mono"
                         >
-                          HistÃ³rico
+                          Histórico
                         </button>
                         <button
                           onClick={() => setShowNarrativeBox(false)}
                           className="text-zinc-500 hover:text-zinc-300 p-0.5 rounded"
-                          title="Dispensar narraÃ§Ã£o"
+                          title="Dispensar narração"
                         >
                           <X size={13} />
                         </button>
@@ -4009,7 +4009,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                       onOpenInventory={() => setShowInventory(true)}
                       onOpenCharacterCreator={() => {
                         if (room?.id === 'mmo-world-village' && state?.characters?.some((c) => c.owner === user)) {
-                          setError('VocÃª jÃ¡ possui um personagem ativo neste mundo MMO.');
+                          setError('Você já possui um personagem ativo neste mundo MMO.');
                           return;
                         }
                         setShowCharacterCreator(true);
@@ -4037,7 +4037,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                   </div>
                 )}
 
-                {/* 3. DOCKED RIGHT GAMEMASTER DRAWER (CAIXA DE GM RETRÃTIL COM NARRATIVA E CHAT) */}
+                {/* 3. DOCKED RIGHT GAMEMASTER DRAWER (CAIXA DE GM RETRÁTIL COM NARRATIVA E CHAT) */}
                 {showGmSidebar && (
                   <div className={`absolute top-2 right-2 bottom-20 z-30 pointer-events-auto transition-all duration-300 ${
                     mobileTab === 'gm' ? 'flex' : 'hidden'
@@ -4095,7 +4095,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                   </div>
                 )}
 
-                {/* 4. FLOATING BOTTOM ACTION BAR (ATAQUE, MAGIA, PASSAR TURNO, POÃ‡ÃƒO, ITENS) */}
+                {/* 4. FLOATING BOTTOM ACTION BAR (ATAQUE, MAGIA, PASSAR TURNO, POÇÃO, ITENS) */}
                 {active && (
                   <div className={`absolute bottom-1 left-1/2 -translate-x-1/2 z-30 pointer-events-auto w-[98%] max-w-6xl transition-all ${
                     mobileTab === 'party' || mobileTab === 'gm' ? 'hidden md:block' : 'block'
@@ -4271,11 +4271,11 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                       onOpenShop={() => {
                         setShopMerchant({
                           id: 'elenor',
-                          name: 'EmpÃ³rio de Valdoria',
-                          role: 'Mercado de ProvisÃµes & Alquimia',
+                          name: 'Empório de Valdoria',
+                          role: 'Mercado de Provisões & Alquimia',
                           category: 'alchemy',
-                          avatar: 'ðŸ›’',
-                          dialogue: 'PoÃ§Ãµes, armas e suprimentos certificados pelo AnciÃ£o Doran para sua jornada.'
+                          avatar: '🛒',
+                          dialogue: 'Poções, armas e suprimentos certificados pelo Ancião Doran para sua jornada.'
                         });
                         setShowShop(true);
                       }}
@@ -4317,7 +4317,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                           Inimigos Derrotados!
                         </strong>
                         <span className="text-[10px] text-zinc-300">
-                          A passagem para o prÃ³ximo nÃ­vel estÃ¡ liberada.
+                          A passagem para o próximo nível está liberada.
                         </span>
                       </div>
                     </div>
@@ -4325,7 +4325,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                       onClick={handleAdvanceAct}
                       className="gold-button text-xs py-1 px-2.5 animate-pulse shrink-0"
                     >
-                      <span>AvanÃ§ar de Ato</span>
+                      <span>Avançar de Ato</span>
                       <ChevronRight size={13} />
                     </button>
                   </div>
@@ -4346,7 +4346,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                   onOpenJournal={() => setShowQuests(true)}
                 />
 
-                {/* Quest Log / DiÃ¡rio de MissÃµes Modal */}
+                {/* Quest Log / Diário de Missões Modal */}
                 {showQuests && (
                   <QuestLog
                     onClose={() => setShowQuests(false)}
@@ -4406,10 +4406,10 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                         setShopMerchant({
                           id: 'elenor',
                           name: 'Alquimista Elenor',
-                          role: 'Erborista â€¢ Mestre das PoÃ§Ãµes',
+                          role: 'Erborista • Mestre das Poções',
                           category: 'alchemy',
-                          avatar: 'ðŸ§ª',
-                          dialogue: 'Trago elixires destilados das raÃ­zes de Valdoria e pergaminhos arcanos para suas expediÃ§Ãµes.'
+                          avatar: '🧪',
+                          dialogue: 'Trago elixires destilados das raízes de Valdoria e pergaminhos arcanos para suas expedições.'
                         });
                         setShowShop(true);
                         setActiveNpcDialog(null);
@@ -4418,11 +4418,11 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                       if (actionText === 'OPEN_SHOP_KAELEN') {
                         setShopMerchant({
                           id: 'kaelen',
-                          name: 'CapitÃ£o Kaelen',
-                          role: 'Guarda da Fronteira â€¢ Armeiro da Vila',
+                          name: 'Capitão Kaelen',
+                          role: 'Guarda da Fronteira • Armeiro da Vila',
                           category: 'blacksmith',
-                          avatar: 'âš”ï¸',
-                          dialogue: 'AÃ§o forjado nas colinas e armaduras robustas certificadas para combate.'
+                          avatar: '⚔️',
+                          dialogue: 'Aço forjado nas colinas e armaduras robustas certificadas para combate.'
                         });
                         setShowShop(true);
                         setActiveNpcDialog(null);
@@ -4448,7 +4448,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                         void handleTravel('forest');
                         return;
                       }
-                      void narrate('', `${active?.name || 'O herÃ³i'}: "${actionText}"`);
+                      void narrate('', `${active?.name || 'O herói'}: "${actionText}"`);
                       setActiveNpcDialog(null);
                     }}
                     onClose={() => setActiveNpcDialog(null)}
@@ -4495,20 +4495,20 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                     <DialogContent className="max-w-md bg-zinc-950/95 border-amber-500/50 text-zinc-100 shadow-[0_0_50px_rgba(0,0,0,0.8)] backdrop-blur-xl">
                       <DialogHeader>
                         <DialogTitle className="text-lg font-serif font-bold text-amber-300 flex items-center gap-2">
-                          <span>ðŸ’€</span>
-                          <span>ExpediÃ§Ã£o Ã s Catacumbas dos TrÃªs Selos</span>
+                          <span>💀</span>
+                          <span>Expedição às Catacumbas dos Três Selos</span>
                         </DialogTitle>
                         <DialogDescription className="text-xs text-zinc-300 leading-relaxed pt-1">
-                          As catacumbas ancestrais contÃªm mÃºltiplos andares gerados proceduralmente.
+                          As catacumbas ancestrais contêm múltiplos andares gerados proceduralmente.
                           Monstros patrulham as salas, segredos aguardam os atentos e a cada andar o perigo e os tesouros aumentam.
                         </DialogDescription>
                       </DialogHeader>
 
                       <div className="space-y-3 py-3">
                         <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800 space-y-1">
-                          <div className="font-bold text-xs text-amber-200">Como vocÃª deseja entrar?</div>
+                          <div className="font-bold text-xs text-amber-200">Como você deseja entrar?</div>
                           <div className="text-[11px] text-zinc-400">
-                            No modo solo, os encontros sÃ£o equilibrados para 1 aventureiro. Em grupo, composiÃ§Ãµes ricas de inimigos com elites tÃ¡ticos serÃ£o geradas.
+                            No modo solo, os encontros são equilibrados para 1 aventureiro. Em grupo, composições ricas de inimigos com elites táticos serão geradas.
                           </div>
                         </div>
 
@@ -4517,7 +4517,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                             onClick={() => handleStartExpedition('solo')}
                             className="p-3 rounded-xl bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-700 hover:border-amber-400 text-left transition-all hover:scale-[1.02] cursor-pointer"
                           >
-                            <div className="text-sm font-bold text-amber-200">âš”ï¸ Entrar Sozinho</div>
+                            <div className="text-sm font-bold text-amber-200">⚔️ Entrar Sozinho</div>
                             <div className="text-[10px] text-zinc-400 pt-0.5">Modo Solo equilibrado</div>
                           </button>
 
@@ -4525,8 +4525,8 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                             onClick={() => handleStartExpedition('party')}
                             className="p-3 rounded-xl bg-gradient-to-br from-amber-950/40 to-zinc-950 border border-amber-600/60 hover:border-amber-400 text-left transition-all hover:scale-[1.02] cursor-pointer shadow-lg"
                           >
-                            <div className="text-sm font-bold text-amber-300">ðŸ‘¥ Formar Grupo</div>
-                            <div className="text-[10px] text-zinc-300 pt-0.5">Desafio tÃ¡tico e loot ampliado</div>
+                            <div className="text-sm font-bold text-amber-300">👥 Formar Grupo</div>
+                            <div className="text-[10px] text-zinc-300 pt-0.5">Desafio tático e loot ampliado</div>
                           </button>
                         </div>
                       </div>
@@ -4549,42 +4549,42 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                     <DialogContent className="max-w-md bg-zinc-950/95 border-amber-500/60 text-zinc-100 shadow-[0_0_60px_rgba(245,158,11,0.3)] backdrop-blur-xl">
                       <DialogHeader>
                         <DialogTitle className="text-lg font-serif font-bold text-amber-300 flex items-center gap-2">
-                          <span>ðŸšª</span>
-                          <span>Escadaria das Profundezas â€¢ Andar {dungeonExpedition?.currentFloor || 1}</span>
+                          <span>🚪</span>
+                          <span>Escadaria das Profundezas • Andar {dungeonExpedition?.currentFloor || 1}</span>
                         </DialogTitle>
                         <DialogDescription className="text-xs text-zinc-300 leading-relaxed pt-1">
-                          VocÃª alcanÃ§ou uma passagem principal. Escolha entre extrair com os espÃ³lios acumulados ou arriscar o prÃ³ximo andar por recompensas lendÃ¡rias.
+                          Você alcançou uma passagem principal. Escolha entre extrair com os espólios acumulados ou arriscar o próximo andar por recompensas lendárias.
                         </DialogDescription>
                       </DialogHeader>
 
                       <div className="space-y-3 py-3">
-                        {/* Resumo de EspÃ³lios Acumulados */}
+                        {/* Resumo de Espólios Acumulados */}
                         <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-500/40 flex items-center justify-between">
-                          <span className="text-xs font-semibold text-zinc-300">EspÃ³lios da ExpediÃ§Ã£o:</span>
+                          <span className="text-xs font-semibold text-zinc-300">Espólios da Expedição:</span>
                           <div className="flex items-center gap-3">
                             <span className="text-xs font-mono font-bold text-amber-300">
-                              ðŸª™ {dungeonExpedition?.accumulatedLoot.gold || 0} PO
+                              🪙 {dungeonExpedition?.accumulatedLoot.gold || 0} PO
                             </span>
                             <span className="text-xs font-mono font-bold text-emerald-300">
-                              âœ¨ {dungeonExpedition?.accumulatedLoot.items.length || 0} Itens
+                              ✨ {dungeonExpedition?.accumulatedLoot.items.length || 0} Itens
                             </span>
                           </div>
                         </div>
 
-                        {/* BotÃµes de AÃ§Ã£o */}
+                        {/* Botões de Ação */}
                         <div className="flex flex-col gap-2 pt-1">
                           <button
                             onClick={handleExtractExpedition}
                             className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-black font-black text-xs uppercase tracking-wide shadow-lg transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
                           >
-                            <span>ðŸ›¡ï¸ Extrair com SeguranÃ§a (Garantir 100% dos EspÃ³lios)</span>
+                            <span>🛡️ Extrair com Segurança (Garantir 100% dos Espólios)</span>
                           </button>
 
                           <button
                             onClick={handleDescendFloor}
                             className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-black font-black text-xs uppercase tracking-wide shadow-lg transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
                           >
-                            <span>âš”ï¸ Aprofundar para o Andar {(dungeonExpedition?.currentFloor || 1) + 1} (Mais Risco & Loot)</span>
+                            <span>⚔️ Aprofundar para o Andar {(dungeonExpedition?.currentFloor || 1) + 1} (Mais Risco & Loot)</span>
                           </button>
                         </div>
                       </div>
@@ -4613,10 +4613,10 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                   </div>
                   <div>
                     <h2 className="text-base font-serif font-black text-amber-200">
-                      CÃ¢mara dos Aventureiros & HerÃ³is
+                      Câmara dos Aventureiros & Heróis
                     </h2>
                     <p className="text-xs text-zinc-300 max-w-xl leading-relaxed">
-                      Gerencie as fichas dos seus herÃ³is ou forje um novo personagem com o construtor guiado D&D 5e (SRD 5.2.1). Todos os personagens estÃ£o prontos para explorar a aventura e o Mundo MMO.
+                      Gerencie as fichas dos seus heróis ou forje um novo personagem com o construtor guiado D&D 5e (SRD 5.2.1). Todos os personagens estão prontos para explorar a aventura e o Mundo MMO.
                     </p>
                   </div>
                 </div>
@@ -4635,7 +4635,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
               <Tabs defaultValue="heroes">
                 <TabsList>
                   <TabsTrigger value="heroes">Aventureiros ({state?.characters?.length || 0})</TabsTrigger>
-                  <TabsTrigger value="npcs">NPCs do CenÃ¡rio ({state?.npcs?.length || 0})</TabsTrigger>
+                  <TabsTrigger value="npcs">NPCs do Cenário ({state?.npcs?.length || 0})</TabsTrigger>
                 </TabsList>
                 <TabsContent value="heroes">
                   <div className="character-grid">
@@ -4648,7 +4648,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                               <h2>{c.name}</h2>
                               {c.owner === user ? (
                                 <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/40 font-mono">
-                                  Seu HerÃ³i
+                                  Seu Herói
                                 </span>
                               ) : (
                                 <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded border border-emerald-500/40 font-mono">
@@ -4657,7 +4657,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                               )}
                             </div>
                             <p>
-                              {c.species} â€¢ {c.className} {c.level}
+                              {c.species} • {c.className} {c.level}
                             </p>
                           </div>
                         </div>
@@ -4711,7 +4711,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                     >
                       <Plus size={28} />
                       <h2>Um novo aventureiro</h2>
-                      <p>Crie a prÃ³xima histÃ³ria da sua mesa (Wizard de 4 passos).</p>
+                      <p>Crie a próxima história da sua mesa (Wizard de 4 passos).</p>
                     </button>
                   </div>
                 </TabsContent>
@@ -4750,7 +4750,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                         <input required maxLength={100} value={npcRole} onChange={(e) => setNpcRole(e.target.value)} />
                       </label>
                       <label className="field span-two">
-                        HistÃ³ria
+                        História
                         <textarea
                           required
                           value={npcDesc}
@@ -4766,8 +4766,8 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                 </TabsContent>
               </Tabs>
             </div>
-          ) : view === 'CompÃªndio' ? (
-            /* --- COMPÃŠNDIO VIEW --- */
+          ) : view === 'Compêndio' ? (
+            /* --- COMPÊNDIO VIEW --- */
             <Library />
           ) : view === 'Atlas' && room ? (
             /* --- ATLAS VIEW --- */
@@ -4779,10 +4779,10 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                   </div>
                   <div>
                     <h2 className="text-base font-serif font-black text-emerald-200">
-                      Atlas de Valdoria â€¢ Reinos e Biomas
+                      Atlas de Valdoria • Reinos e Biomas
                     </h2>
                     <p className="text-xs text-zinc-300 max-w-xl leading-relaxed">
-                      Viaje entre os cenÃ¡rios da campanha: da pacÃ­fica Vila do Rio Verde atÃ© as densas matas da Floresta dos Sussurros e as profundezas das Catacumbas.
+                      Viaje entre os cenários da campanha: da pacífica Vila do Rio Verde até as densas matas da Floresta dos Sussurros e as profundezas das Catacumbas.
                     </p>
                   </div>
                 </div>
@@ -4797,8 +4797,8 @@ worldFlags={active?.worldFlags || state?.worldFlags}
 
               <div className="atlas-scene scene">
                 <div className="scene-caption">
-                  <p className="eyebrow">VALDORIA â€¢ CAMPANHA ORIGINAL</p>
-                  <h2>TrÃªs lugares. Um segredo.</h2>
+                  <p className="eyebrow">VALDORIA • CAMPANHA ORIGINAL</p>
+                  <h2>Três lugares. Um segredo.</h2>
                 </div>
               </div>
               <div className="character-grid">
@@ -4809,19 +4809,19 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                     <p>{l.text}</p>
                     {state!.location === i ? (
                       <span className="text-xs px-3 py-1.5 rounded-lg bg-emerald-950/80 border border-emerald-500 text-emerald-300 font-bold font-mono">
-                        ðŸ“ LocalizaÃ§Ã£o Atual
+                        📍 Localização Atual
                       </span>
                     ) : (
                       <div className="flex flex-col gap-1.5">
                         <span className="text-[11px] text-amber-300/80 font-mono">
-                          ðŸšª Acesso via portÃµes e portais do mapa tÃ¡tico da aventura.
+                          🚪 Acesso via portões e portais do mapa tático da aventura.
                         </span>
                         <button
                           type="button"
                           onClick={() => setView('Aventura')}
                           className="gold-button text-xs py-1.5 px-3 flex items-center gap-1 cursor-pointer"
                         >
-                          <span>Ir para o Mapa TÃ¡tico</span> <ChevronRight size={13} />
+                          <span>Ir para o Mapa Tático</span> <ChevronRight size={13} />
                         </button>
                       </div>
                     )}
@@ -4834,11 +4834,11 @@ worldFlags={active?.worldFlags || state?.worldFlags}
             <div className="settings-layout">
               <section className="panel">
                 <p className="eyebrow">
-                  <Flame size={16} /> INTELIGÃŠNCIA ARTIFICIAL (GROQ & GEMINI)
+                  <Flame size={16} /> INTELIGÊNCIA ARTIFICIAL (GROQ & GEMINI)
                 </p>
                 <h2>A Voz do seu Mundo</h2>
                 <p>
-                  A Groq (Llama 3.3 70B) fornece inferÃªncia ultrarrÃ¡pida para videogame, com narraÃ§Ãµes concisas e opÃ§Ãµes de aÃ§Ã£o interativas.
+                  A Groq (Llama 3.3 70B) fornece inferência ultrarrápida para videogame, com narrações concisas e opções de ação interativas.
                 </p>
                 <label className="field">
                   Chave da API (Groq ou Gemini)
@@ -4847,11 +4847,11 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                     autoComplete="off"
                     value={key}
                     onChange={(e) => setKey(e.target.value)}
-                    placeholder="Chave personalizada ou deixe em branco para chave padrÃ£o"
+                    placeholder="Chave personalizada ou deixe em branco para chave padrão"
                   />
                 </label>
                 <p className="muted">
-                  A chave oficial da Groq jÃ¡ estÃ¡ configurada por padrÃ£o no servidor para a sua mesa.
+                  A chave oficial da Groq já está configurada por padrão no servidor para a sua mesa.
                 </p>
               </section>
 
@@ -4859,9 +4859,9 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                 <p className="eyebrow">
                   <ScrollText size={16} /> CONTRATO DE REGRAS 5e
                 </p>
-                <h2>AutomaÃ§Ã£o & Narrativa</h2>
+                <h2>Automação & Narrativa</h2>
                 <p>
-                  A IA nÃ£o altera PV, resultados mecÃ¢nicos ou fichas. Ela reage estritamente ao resultado das rolagens automÃ¡ticas do motor de regras.
+                  A IA não altera PV, resultados mecânicos ou fichas. Ela reage estritamente ao resultado das rolagens automáticas do motor de regras.
                 </p>
               </section>
             </div>
@@ -4869,7 +4869,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
 
           {/* Footer Attribution */}
           <footer className="mt-8 text-center text-xs text-zinc-600 border-t border-zinc-900 pt-3">
-            This work includes material from the System Reference Document 5.2.1 (â€œSRD 5.2.1â€) by Wizards of the Coast LLC. Licenciado sob CC BY 4.0.
+            This work includes material from the System Reference Document 5.2.1 ("SRD 5.2.1") by Wizards of the Coast LLC. Licenciado sob CC BY 4.0.
           </footer>
         </section>
 
@@ -4915,14 +4915,14 @@ worldFlags={active?.worldFlags || state?.worldFlags}
               >
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-400 flex items-center justify-center text-emerald-300 shrink-0 shadow">
-                    ðŸŒ
+                    🌍
                   </div>
                   <div>
                     <strong className="block text-xs font-serif text-emerald-200 group-hover:text-emerald-100">
-                      Mundo MMO: Vila do Rio Verde (PÃºblico)
+                      Mundo MMO: Vila do Rio Verde (Público)
                     </strong>
                     <span className="text-[10px] text-zinc-400">
-                      InstÃ¢ncia compartilhada â€¢ Todos os jogadores jogam e lutam juntos
+                      Instância compartilhada • Todos os jogadores jogam e lutam juntos
                     </span>
                   </div>
                 </div>
@@ -4950,9 +4950,9 @@ worldFlags={active?.worldFlags || state?.worldFlags}
               ))}
               {room && (
                 <div className="panel">
-                  <p className="eyebrow">CÃ“DIGO DE CONVITE</p>
+                  <p className="eyebrow">CÓDIGO DE CONVITE</p>
                   <code>{room.code}</code>
-                  <p className="muted">Compartilhe o cÃ³digo com seus amigos para jogarem juntos.</p>
+                  <p className="muted">Compartilhe o código com seus amigos para jogarem juntos.</p>
                 </div>
               )}
               <form
@@ -4980,7 +4980,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                 }}
               >
                 <label className="field">
-                  Entrar com cÃ³digo
+                  Entrar com código
                   <input required value={joinCode} onChange={(e) => setJoinCode(e.target.value)} />
                 </label>
                 <button disabled={busy} className="choice compact">
@@ -5016,7 +5016,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
             <div className="flex items-center gap-2">
               <Shield className="text-emerald-400 animate-pulse shrink-0" size={20} />
               <span className="text-xs sm:text-sm font-serif font-black text-amber-200">
-                âš”ï¸ <strong>{pendingInvite.fromCharName}</strong> convidou vocÃª para o grupo!
+                ⚔️ <strong>{pendingInvite.fromCharName}</strong> convidou você para o grupo!
               </span>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
@@ -5052,11 +5052,11 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                 <Users size={18} className="text-amber-400" />
                 <span>{interactingPlayer.name}</span>
                 <span className="text-xs font-mono font-normal text-zinc-400 px-2 py-0.5 rounded-full bg-zinc-900 border border-zinc-800">
-                  NÃ­vel {interactingPlayer.level}
+                  Nível {interactingPlayer.level}
                 </span>
               </DialogTitle>
               <DialogDescription className="text-xs text-zinc-400">
-                {interactingPlayer.species} â€¢ {interactingPlayer.className} â€¢ {interactingPlayer.background || 'Aventureiro de Valdoria'}
+                {interactingPlayer.species} • {interactingPlayer.className} • {interactingPlayer.background || 'Aventureiro de Valdoria'}
               </DialogDescription>
             </DialogHeader>
 
@@ -5095,7 +5095,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                   </button>
                 ) : (
                   <div className="p-2 rounded-xl bg-sky-950/40 border border-sky-600/40 text-sky-300 text-xs text-center font-mono">
-                    ðŸ›¡ï¸ Este aventureiro jÃ¡ Ã© membro do seu grupo!
+                    🛡️ Este aventureiro já é membro do seu grupo!
                   </div>
                 )}
 
@@ -5104,7 +5104,7 @@ worldFlags={active?.worldFlags || state?.worldFlags}
                   onClick={() => {
                     const target = interactingPlayer;
                     setInteractingPlayer(null);
-                    setMessage(`/c OlÃ¡ ${target.name}! `);
+                    setMessage(`/c Olá ${target.name}! `);
                   }}
                   className="w-full py-2 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
                 >
@@ -5161,7 +5161,7 @@ function CharacterEditor({
       <DialogContent className="character-dialog max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{value?.id ? 'Ficha de ' + value.name : 'Forje seu aventureiro'}</DialogTitle>
-          <DialogDescription>Ficha editÃ¡vel â€¢ SRD 5.2.1 â€¢ EdiÃ§Ã£o 2024</DialogDescription>
+          <DialogDescription>Ficha editável • SRD 5.2.1 • Edição 2024</DialogDescription>
         </DialogHeader>
 
         <Tabs defaultValue="identity">
@@ -5171,7 +5171,7 @@ function CharacterEditor({
               ['stats', 'Atributos'],
               ['combat', 'Combate'],
               ['magic', 'Magias'],
-              ['story', 'HistÃ³ria']
+              ['story', 'História']
             ].map(([id, label]) => (
               <TabsTrigger key={id} value={id}>
                 {label}
@@ -5186,18 +5186,18 @@ function CharacterEditor({
                 <input value={c.name} maxLength={60} onChange={(e) => update('name', e.target.value)} />
               </label>
               <Pick label="Classe" value={c.className} options={classes.map((x) => x[0])} onChange={(v) => update('className', v)} />
-              <Pick label="EspÃ©cie" value={c.species} options={species} onChange={(v) => update('species', v)} />
-              <Pick label="Antecedente" value={c.background} options={['AcÃ³lito', 'Criminoso', 'SÃ¡bio', 'Soldado']} onChange={(v) => update('background', v)} />
+              <Pick label="Espécie" value={c.species} options={species} onChange={(v) => update('species', v)} />
+              <Pick label="Antecedente" value={c.background} options={['Acólito', 'Criminoso', 'Sábio', 'Soldado']} onChange={(v) => update('background', v)} />
               <label className="field">
-                NÃ­vel
+                Nível
                 <input type="number" min={1} max={20} value={c.level} onChange={(e) => update('level', +e.target.value)} />
               </label>
               <label className="field">
-                ExperiÃªncia
+                Experiência
                 <input type="number" min={0} value={c.xp} onChange={(e) => update('xp', +e.target.value)} />
               </label>
               <label className="field span-two">
-                CaracterÃ­sticas e Talentos
+                Características e Talentos
                 <textarea value={c.features} maxLength={6000} onChange={(e) => update('features', e.target.value)} />
               </label>
             </div>
@@ -5219,8 +5219,8 @@ function CharacterEditor({
                 </label>
               ))}
             </div>
-            <p>BÃ´nus de proficiÃªncia: <strong>{signed(prof(c.level))}</strong></p>
-            <h3>PerÃ­cias e especializaÃ§Ã£o</h3>
+            <p>Bônus de proficiência: <strong>{signed(prof(c.level))}</strong></p>
+            <h3>Perícias e especialização</h3>
             <div className="skills-grid">
               {skills.map(([name, i]) => (
                 <div className="skill-row" key={name}>
@@ -5228,7 +5228,7 @@ function CharacterEditor({
                     <Checkbox checked={c.skills.includes(name)} onCheckedChange={() => toggle('skills', name)} />
                     {name} {signed(mod(c.stats[i]) + (c.skills.includes(name) ? prof(c.level) : 0) + (c.expertise.includes(name) ? prof(c.level) : 0))}
                   </label>
-                  <label title="EspecializaÃ§Ã£o">
+                  <label title="Especialização">
                     <Checkbox checked={c.expertise.includes(name)} onCheckedChange={() => toggle('expertise', name)} />
                     Esp.
                   </label>
@@ -5241,11 +5241,11 @@ function CharacterEditor({
             <div className="form-grid">
               {([
                 ['hp', 'PV atuais'],
-                ['maxHp', 'PV mÃ¡ximos'],
+                ['maxHp', 'PV máximos'],
                 ['ac', 'Classe de armadura'],
                 ['speed', 'Deslocamento (m)'],
-                ['attack', 'BÃ´nus de ataque'],
-                ['exhaustion', 'ExaustÃ£o (0â€“6)']
+                ['attack', 'Bônus de ataque'],
+                ['exhaustion', 'Exaustão (0–6)']
               ] as const).map(([k, label]) => (
                 <label className="field" key={k}>
                   {label}
@@ -5281,18 +5281,18 @@ function CharacterEditor({
 
           <TabsContent value="magic">
             <Pick
-              label="Atributo de conjuraÃ§Ã£o"
+              label="Atributo de conjuração"
               value={abilities[c.spellAbility]}
               options={abilities}
               onChange={(v) => update('spellAbility', abilities.indexOf(v))}
             />
             <p className="mt-2">
-              CD de magia: <strong>{8 + prof(c.level) + mod(c.stats[c.spellAbility])}</strong> â€¢ Ataque mÃ¡gico: <strong>{signed(prof(c.level) + mod(c.stats[c.spellAbility]))}</strong>
+              CD de magia: <strong>{8 + prof(c.level) + mod(c.stats[c.spellAbility])}</strong> • Ataque mágico: <strong>{signed(prof(c.level) + mod(c.stats[c.spellAbility]))}</strong>
             </p>
             <div className="slots mt-3">
               {c.slots.map((n, i) => (
                 <label className="field" key={i}>
-                  CÃ­rculo {i + 1}
+                  Círculo {i + 1}
                   <input
                     type="number"
                     min={0}
@@ -5301,7 +5301,7 @@ function CharacterEditor({
                     onChange={(e) => update('slots', c.slots.map((v, j) => (i === j ? +e.target.value : v)))}
                   />
                   <input
-                    title="EspaÃ§os usados"
+                    title="Espaços usados"
                     type="number"
                     min={0}
                     max={n}
@@ -5319,7 +5319,7 @@ function CharacterEditor({
               <textarea value={c.inventory} maxLength={10000} onChange={(e) => update('inventory', e.target.value)} />
             </label>
             <label className="field">
-              HistÃ³ria e notas
+              História e notas
               <textarea value={c.notes} maxLength={10000} onChange={(e) => update('notes', e.target.value)} />
             </label>
           </TabsContent>
@@ -5327,7 +5327,7 @@ function CharacterEditor({
 
         <div className="button-row mt-4">
           <button disabled={busy} className="gold-button" onClick={() => void onSave(c)}>
-            {busy ? 'Salvandoâ€¦' : 'Salvar personagem'}
+            {busy ? 'Salvando…' : 'Salvar personagem'}
           </button>
         </div>
       </DialogContent>
@@ -5357,7 +5357,7 @@ function Library() {
         })
         .then((d) => setItems(d.results))
         .catch((e) => {
-          if (e.name !== 'AbortError') setError('NÃ£o foi possÃ­vel carregar o compÃªndio.');
+          if (e.name !== 'AbortError') setError('Não foi possível carregar o compêndio.');
         })
         .finally(() => setLoading(false));
     }, 180);
@@ -5373,7 +5373,7 @@ function Library() {
       if (!r.ok) throw Error();
       setPage(await r.json());
     } catch {
-      setError('NÃ£o foi possÃ­vel abrir a pÃ¡gina.');
+      setError('Não foi possível abrir a página.');
     }
   }
 
@@ -5387,10 +5387,10 @@ function Library() {
           </div>
           <div>
             <h2 className="text-base font-serif font-black text-sky-200">
-              CompÃªndio & Biblioteca Oficial SRD 5.2.1
+              Compêndio & Biblioteca Oficial SRD 5.2.1
             </h2>
             <p className="text-xs text-zinc-300 max-w-xl leading-relaxed">
-              Consulte todas as regras, magias, monstros e equipamentos oficiais das regras 2024 de D&D 5e. Utilize a busca rÃ¡pida ou filtre por categoria.
+              Consulte todas as regras, magias, monstros e equipamentos oficiais das regras 2024 de D&D 5e. Utilize a busca rápida ou filtre por categoria.
             </p>
           </div>
         </div>
@@ -5402,7 +5402,7 @@ function Library() {
       <div className="library-toolbar">
         <Pick
           value={category}
-          options={['Regras', 'Classes', 'Origens', 'Equipamento', 'Magias', 'GlossÃ¡rio', 'Itens mÃ¡gicos', 'BestiÃ¡rio']}
+          options={['Regras', 'Classes', 'Origens', 'Equipamento', 'Magias', 'Glossário', 'Itens mágicos', 'Bestiário']}
           onChange={setCategory}
         />
         <label className="search-input">
@@ -5410,7 +5410,7 @@ function Library() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar no texto original em inglÃªsâ€¦"
+            placeholder="Buscar no texto original em inglês…"
             aria-label="Buscar regras"
           />
         </label>
@@ -5419,16 +5419,16 @@ function Library() {
         </a>
       </div>
       <p className="muted">
-        {loading ? 'Buscandoâ€¦' : items.length + ' resultados'} â€¢ Texto oficial em inglÃªs. A GM explica em portuguÃªs.
+        {loading ? 'Buscando…' : items.length + ' resultados'} • Texto oficial em inglês. A GM explica em português.
       </p>
       {error && <p role="alert">{error}</p>}
       <div className="library-grid">
         {items.map((p, i) => (
           <button className="panel library-card" key={i} onClick={() => void open(p.page)}>
-            {category === 'BestiÃ¡rio' ? <Skull size={23} /> : <BookOpen size={23} />}
-            <small>SRD 5.2.1 â€¢ PÃGINA {p.page}</small>
+            {category === 'Bestiário' ? <Skull size={23} /> : <BookOpen size={23} />}
+            <small>SRD 5.2.1 • PÁGINA {p.page}</small>
             <h3>{p.name}</h3>
-            {p.excerpt && <p>{p.excerpt}â€¦</p>}
+            {p.excerpt && <p>{p.excerpt}…</p>}
             <span className="read-link">
               Consultar <ChevronRight size={15} />
             </span>
@@ -5436,17 +5436,17 @@ function Library() {
         ))}
       </div>
       {!loading && !items.length && (
-        <div className="panel">Nenhum resultado. Tente um termo em inglÃªs, como â€œconcentrationâ€ ou â€œdragonâ€.</div>
+        <div className="panel">Nenhum resultado. Tente um termo em inglês, como "concentration" ou "dragon".</div>
       )}
       <Dialog open={!!page} onOpenChange={(v) => { if (!v) setPage(null); }}>
         <DialogContent className="rule-dialog">
           <DialogHeader>
-            <DialogTitle>SRD 5.2.1 â€¢ PÃ¡gina {page?.page}</DialogTitle>
-            <DialogDescription>Texto extraÃ­do da referÃªncia oficial.</DialogDescription>
+            <DialogTitle>SRD 5.2.1 • Página {page?.page}</DialogTitle>
+            <DialogDescription>Texto extraído da referência oficial.</DialogDescription>
           </DialogHeader>
           <pre className="rule-text">{page?.text}</pre>
           <a className="gold-button" href={'/SRD-5.2.1.pdf#page=' + page?.page} target="_blank" rel="noreferrer">
-            Abrir pÃ¡gina original <ArrowUpRight size={15} />
+            Abrir página original <ArrowUpRight size={15} />
           </a>
         </DialogContent>
       </Dialog>

@@ -211,7 +211,7 @@ try {
             id:
               'legacy-shield',
             name:
-              'Escudo RÃºnico',
+              'Escudo Rúnico',
             type:
               'geral',
             rarity:
