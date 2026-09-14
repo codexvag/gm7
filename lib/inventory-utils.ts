@@ -13,7 +13,7 @@ export function normalizeInventoryName(value: string): string {
 
 export function stripInventoryQuantity(value: string): string {
   const text = String(value || '').trim();
-  const match = text.match(/^(.*?)(?:\s*\((\d+)\))?\s*$/);
+  const match = text.match(/^(.*?)(?:\s*\([xX]?(\d+)\))?\s*$/);
   return (match?.[1] || text).trim();
 }
 
@@ -24,7 +24,7 @@ export function parseInventoryStacks(inventory: string): InventoryStack[] {
     const line = rawLine.trim();
     if (!line) continue;
 
-    const match = line.match(/^(.*?)(?:\s*\((\d+)\))?\s*$/);
+    const match = line.match(/^(.*?)(?:\s*\([xX]?(\d+)\))?\s*$/);
     const name = (match?.[1] || line).trim();
     const quantity = Math.max(1, Number(match?.[2] || 1));
     const key = normalizeInventoryName(name);

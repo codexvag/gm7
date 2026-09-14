@@ -463,6 +463,7 @@ export type Character = {
   location?: number;
   biome?: BiomeType;
   activeMicroAdventureId?: string;
+  activeActivityId?: string;
   updatedAt?: number;
   lastSeen?: number;
   hitDiceSpent?: number;
@@ -603,6 +604,28 @@ export type ActiveSpellEffect = {
   requiresAdjudication?: boolean;
 };
 
+export type WorldActivityType =
+  | 'campaign'
+  | 'microadventure'
+  | 'dungeon'
+  | 'contract'
+  | 'world_event';
+
+export type WorldActivityState = {
+  id: string;
+  type: WorldActivityType;
+  scopeKey: string;
+  status:
+    | 'available'
+    | 'active'
+    | 'completed'
+    | 'abandoned';
+  title?: string;
+  payload: Record<string, any>;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type State = {
   characters: Character[];
   enemies: Enemy[];
@@ -619,6 +642,8 @@ export type State = {
   questProgress?: Record<string, boolean>;
   worldFlags?: Record<string, boolean>;
   activeMicroAdventureId?: string;
+  worldSchemaVersion?: number;
+  activities?: Record<string, WorldActivityState>;
   actionUsed?: boolean;
   bonusActionUsed?: boolean;
   reactionUsedBy?: Record<string, boolean>;
@@ -698,6 +723,8 @@ export function initialState(): State {
     questProgress: {},
     worldFlags: {},
     act: 1,
+    worldSchemaVersion: 1,
+    activities: {},
     corpses: [],
     economyContext: {
       inflationMultiplier: 1.0,

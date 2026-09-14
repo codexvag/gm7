@@ -27,7 +27,7 @@ export interface CampaignStep {
   description: string;
   locationHint: string;
   actionLabel?: string;
-  actionType?: 'talk_doran' | 'talk_elenor' | 'talk_kaelen' | 'travel_forest' | 'travel_dungeon' | 'combat' | 'rest';
+  actionType?: 'talk_doran' | 'talk_elenor' | 'talk_kaelen' | 'travel_forest' | 'travel_ruins' | 'travel_dungeon' | 'travel_canyon' | 'travel_lair' | 'combat' | 'rest' | 'open_journal';
 }
 
 export const CAMPAIGN_STEPS: CampaignStep[] = [
@@ -36,9 +36,9 @@ export const CAMPAIGN_STEPS: CampaignStep[] = [
     act: 0,
     chapterTitle: 'Prólogo • Vila do Rio Verde',
     stepTitle: 'O Chamado do Ancião Doran',
-    description: 'Criaturas de cinzas foram avistadas ao redor da vila. Encontre o Ancião Doran na praça central para receber sua incumbência sagrada.',
+    description: 'Encontre o Ancião Doran e receba a missão que inicia a campanha de Valdoria.',
     locationHint: 'Praça Central da Vila',
-    actionLabel: 'Falar com Ancião Doran',
+    actionLabel: 'Falar com Doran',
     actionType: 'talk_doran'
   },
   {
@@ -46,9 +46,9 @@ export const CAMPAIGN_STEPS: CampaignStep[] = [
     act: 0,
     chapterTitle: 'Prólogo • Vila do Rio Verde',
     stepTitle: 'Provisões da Alquimista Elenor',
-    description: 'A floresta além dos muros é traiçoeira. Consulte a Alquimista Elenor para garantir elixires e Poções de Cura para a jornada.',
-    locationHint: 'Oficina da Erborista',
-    actionLabel: 'Consultar Elenor',
+    description: 'Prepare a expedição e converse com Elenor antes de deixar a segurança da vila.',
+    locationHint: 'Oficina da Alquimista',
+    actionLabel: 'Falar com Elenor',
     actionType: 'talk_elenor'
   },
   {
@@ -56,40 +56,70 @@ export const CAMPAIGN_STEPS: CampaignStep[] = [
     act: 0,
     chapterTitle: 'Prólogo • Vila do Rio Verde',
     stepTitle: 'Autorização do Capitão Kaelen',
-    description: 'Apresente-se ao Capitão Kaelen na guarnição para receber a bênção tática da guarda e a autorização de passagem pelos portões da vila.',
-    locationHint: 'Posto de Guarda da Ponte',
-    actionLabel: 'Falar com Capitão Kaelen',
+    description: 'Obtenha a autorização da guarda para atravessar os portões e iniciar a expedição.',
+    locationHint: 'Posto de Guarda',
+    actionLabel: 'Falar com Kaelen',
     actionType: 'talk_kaelen'
   },
   {
     id: 4,
     act: 1,
-    chapterTitle: 'Ato I • A Floresta dos Sussurros',
-    stepTitle: 'Neutralizar a Patrulha de Cinzas',
-    description: 'Marche para a Mata e enfrente a Sentinela de Cinzas e seus cães das sombras para limpar a trilha que conduz ao Menir Sagrado.',
-    locationHint: 'Trilha da Floresta dos Sussurros',
-    actionLabel: 'Viajar para a Mata',
+    chapterTitle: 'Ato I • Floresta dos Sussurros',
+    stepTitle: 'Assegurar a Rota da Floresta',
+    description: 'Derrote a Sentinela de Cinzas e as criaturas que controlam a passagem.',
+    locationHint: 'Floresta dos Sussurros',
+    actionLabel: 'Viajar para a Floresta',
     actionType: 'travel_forest'
   },
   {
     id: 5,
     act: 2,
-    chapterTitle: 'Ato II • Catacumbas dos Três Selos',
-    stepTitle: 'Descer à Masmorra Subterrânea',
-    description: 'Adentre as catacumbas sob as ruínas antigas. Derrote o Guardião Espectral e decifre os três selos inscritos na pedra.',
-    locationHint: 'Câmaras das Catacumbas',
-    actionLabel: 'Entrar na Dungeon',
-    actionType: 'travel_dungeon'
+    chapterTitle: 'Ato II • Ruínas da Abadia',
+    stepTitle: 'Expurgar o Culto das Cinzas',
+    description: 'Atravesse as ruínas e elimine a força que protege a entrada das catacumbas.',
+    locationHint: 'Pátio das Ruínas da Abadia',
+    actionLabel: 'Viajar para as Ruínas',
+    actionType: 'travel_ruins'
   },
   {
     id: 6,
+    act: 2,
+    chapterTitle: 'Ato II • Catacumbas dos Três Selos',
+    stepTitle: 'Derrotar Malakor',
+    description: 'Entre nas catacumbas, vença os guardiões e derrube Malakor, o Lorde das Cinzas.',
+    locationHint: 'Catacumbas dos Três Selos',
+    actionLabel: 'Entrar nas Catacumbas',
+    actionType: 'travel_dungeon'
+  },
+  {
+    id: 7,
     act: 3,
-    chapterTitle: 'Ato III • O Santuário do Vazio (Clímax)',
-    stepTitle: 'Confrontar Malakor, o Conjurador do Vazio',
-    description: 'No centro do santuário profanado, impeça Malakor de quebrar a última barreira arcana. Derrote-o e salve Valdoria do esquecimento eterno!',
-    locationHint: 'Coração do Santuário do Vazio',
-    actionLabel: 'Batalha Decisiva',
-    actionType: 'combat'
+    chapterTitle: 'Ato III • Desfiladeiro da Fenda',
+    stepTitle: 'Romper a Vanguarda Dracônica',
+    description: 'Destrua os wyrmlings e guerreiros draconianos que bloqueiam o caminho até a cratera.',
+    locationHint: 'Desfiladeiro da Fenda Escarpada',
+    actionLabel: 'Viajar para o Desfiladeiro',
+    actionType: 'travel_canyon'
+  },
+  {
+    id: 8,
+    act: 3,
+    chapterTitle: 'Ato III • Covil de Ignisrax',
+    stepTitle: 'Confrontar Ignisrax',
+    description: 'Entre na Cratera Magmática e derrote Ignisrax para encerrar a campanha principal.',
+    locationHint: 'Covil de Ignisrax',
+    actionLabel: 'Marchar para o Covil',
+    actionType: 'travel_lair'
+  },
+  {
+    id: 9,
+    act: 3,
+    chapterTitle: 'Epílogo • Mundo Persistente',
+    stepTitle: 'Valdoria Continua Viva',
+    description: 'A campanha principal foi concluída. Contratos, dungeons, economia e eventos do sandbox continuam ativos.',
+    locationHint: 'Valdoria',
+    actionLabel: 'Abrir Diário',
+    actionType: 'open_journal'
   }
 ];
 
@@ -97,7 +127,7 @@ interface CampaignTrackerProps {
   state: State | null;
   activeHero?: Character | null;
   onTalkNpc: (npcId: string) => void;
-  onTravel: (biome: 'village' | 'forest' | 'dungeon') => void;
+  onTravel: (biome: 'village' | 'forest' | 'ruins' | 'dungeon' | 'canyon' | 'lair') => void;
   onStartCombat: () => void;
   onOpenJournal: () => void;
 }
@@ -208,11 +238,23 @@ export function CampaignTracker({
       case 'travel_forest':
         onTravel('forest');
         break;
+      case 'travel_ruins':
+        onTravel('ruins');
+        break;
       case 'travel_dungeon':
         onTravel('dungeon');
         break;
+      case 'travel_canyon':
+        onTravel('canyon');
+        break;
+      case 'travel_lair':
+        onTravel('lair');
+        break;
       case 'combat':
         onStartCombat();
+        break;
+      case 'open_journal':
+        onOpenJournal();
         break;
     }
   };

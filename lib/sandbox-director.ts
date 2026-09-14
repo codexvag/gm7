@@ -15,10 +15,12 @@ import {
   entry,
   type State,
   type BiomeType,
+  type Character,
   type Enemy
 } from './game-engine';
 import { generateProceduralItem, type ItemTier } from './procedural-items';
 import { MICRO_ADVENTURES } from './micro-adventures';
+import { clampGridPoint } from './map-bounds';
 
 export interface CompactWorldContext {
   biome: BiomeType;
@@ -83,46 +85,216 @@ function getRoomMemory(roomId: string): DirectorRoomMemory {
 /**
  * Reads a compact, high-efficiency snapshot of the world for the director.
  */
-export function readCompactWorldContext(state: State, roomId: string = 'mmo-world-village'): CompactWorldContext {
-  const mem = getRoomMemory(roomId);
-  const now = Date.now();
+export function readCompactWorldContext(
+  state: State,
+  roomId: string = 'mmo-world-village',
+  focusHero?: Character
+): CompactWorldContext {
+  const mem =
+    getRoomMemory(
+      roomId
+    );
 
-  const aliveHeroes = state.characters.filter((c) => c.hp > 0);
-  const avgLevel = aliveHeroes.length > 0
-    ? Math.round(aliveHeroes.reduce((acc, h) => acc + (h.level || 1), 0) / aliveHeroes.length)
-    : 1;
+  const now =
+    Date.now();
 
-  const activeEnemies = state.enemies.filter((e) => e.hp > 0);
+  const scopedHeroes =
+    focusHero
+      ? focusHero.partyId
+        ? state.characters.filter(
+            (hero) =>
+              hero.partyId ===
+              focusHero.partyId
+          )
+        : state.characters.filter(
+            (hero) =>
+              hero.id ===
+              focusHero.id
+          )
+      : state.characters;
 
-  // Calculate dynamic tension:
-  // - High if combat or enemies nearby
-  // - Decays during peaceful rest
-  if (state.combat) {
-    mem.tension = Math.min(100, mem.tension + 15);
+  const aliveHeroes =
+    scopedHeroes.filter(
+      (hero) =>
+        hero.hp > 0
+    );
+
+  const avgLevel =
+    aliveHeroes.length > 0
+      ? Math.round(
+          aliveHeroes.reduce(
+            (total, hero) =>
+              total +
+              (
+                hero.level ||
+                1
+              ),
+            0
+          ) /
+          aliveHeroes.length
+        )
+      : 1;
+
+  const biome =
+    focusHero?.biome ||
+    state.biome ||
+    'village';
+
+  const activeEnemies =
+    state.enemies.filter(
+      (enemy) => {
+        if (enemy.hp <= 0) {
+          return false;
+        }
+
+        if (
+          enemy.biome &&
+          enemy.biome !==
+            biome
+        ) {
+          return false;
+        }
+
+        if (!focusHero) {
+          return true;
+        }
+
+        if (
+          focusHero.partyId
+        ) {
+          return (
+            enemy.partyId ===
+            focusHero.partyId
+          );
+        }
+
+        return (
+          enemy.ownerCharId ===
+            focusHero.id
+        );
+      }
+    );
+
+  if (
+    state.combat &&
+    (
+      !focusHero ||
+      (state.order || [])
+        .includes(
+          focusHero.id
+        ) ||
+      state.combatPartyId ===
+        (
+          focusHero.partyId ||
+          focusHero.id
+        )
+    )
+  ) {
+    mem.tension =
+      Math.min(
+        100,
+        mem.tension +
+          15
+      );
   } else {
-    const elapsedMinutes = (now - mem.lastEventTimestamp) / 60000;
-    mem.tension = Math.max(5, Math.round(mem.tension - elapsedMinutes * 5));
+    const elapsedMinutes =
+      (
+        now -
+        mem.lastEventTimestamp
+      ) /
+      60000;
+
+    mem.tension =
+      Math.max(
+        5,
+        Math.round(
+          mem.tension -
+          elapsedMinutes *
+            5
+        )
+      );
   }
 
-  const timeSinceLastEventSec = Math.round((now - mem.lastEventTimestamp) / 1000);
+  const timeSinceLastEventSec =
+    Math.round(
+      (
+        now -
+        mem.lastEventTimestamp
+      ) /
+      1000
+    );
 
-  const recentLogs = (state.logs || [])
-    .slice(-4)
-    .map((l) => l.text.replace(/[\n\r]+/g, ' ').slice(0, 80))
-    .join(' | ');
+  const recentLogs =
+    (state.logs || [])
+      .slice(-4)
+      .map(
+        (log) =>
+          log.text
+            .replace(
+              /[\n\r]+/g,
+              ' '
+            )
+            .slice(
+              0,
+              80
+            )
+      )
+      .join(' | ');
+
+  const location =
+    focusHero?.location ??
+    state.location ??
+    0;
 
   return {
-    biome: state.biome || 'village',
-    locationName: state.location === 0 ? 'Vila do Rio Verde' : state.location === 1 ? 'Floresta dos Sussurros' : 'Território de Valdoria',
-    playersCount: aliveHeroes.length,
-    playersAvgLevel: avgLevel,
-    isCombat: state.combat,
-    activeEnemiesCount: activeEnemies.length,
-    tensionLevel: mem.tension,
+    biome,
+    locationName:
+      location === 0
+        ? 'Vila do Rio Verde'
+        : location === 1
+          ? 'Floresta dos Sussurros'
+          : location === 2
+            ? 'Ruínas da Abadia'
+            : location === 3
+              ? 'Catacumbas dos Três Selos'
+              : location === 4
+                ? 'Desfiladeiro da Fenda'
+                : 'Covil de Ignisrax',
+    playersCount:
+      aliveHeroes.length,
+    playersAvgLevel:
+      avgLevel,
+    isCombat:
+      Boolean(
+        state.combat &&
+        (
+          !focusHero ||
+          (state.order || [])
+            .includes(
+              focusHero.id
+            ) ||
+          state.combatPartyId ===
+            (
+              focusHero.partyId ||
+              focusHero.id
+            )
+        )
+      ),
+    activeEnemiesCount:
+      activeEnemies.length,
+    tensionLevel:
+      mem.tension,
     timeSinceLastEventSec,
-    activeMicroAdventureId: state.activeMicroAdventureId,
-    economyPriceMultiplier: state.economyContext?.priceMultiplier || 1.0,
-    recentLogsSummary: recentLogs || 'Tranquilidade aparente no horizonte.'
+    activeMicroAdventureId:
+      focusHero?.activeMicroAdventureId ||
+      state.activeMicroAdventureId,
+    economyPriceMultiplier:
+      state.economyContext
+        ?.priceMultiplier ||
+      1,
+    recentLogsSummary:
+      recentLogs ||
+      'Tranquilidade aparente no horizonte.'
   };
 }
 
@@ -245,7 +417,8 @@ export function spawnCreatureSafely(
   state: State,
   name: string,
   tier: ItemTier = 1,
-  startCombat: boolean = false
+  startCombat: boolean = false,
+  focusHero?: Character
 ): { approved: boolean; reason: string } {
   const aliveEnemies = state.enemies.filter((e) => e.hp > 0);
   if (aliveEnemies.length >= 6) {
@@ -258,10 +431,24 @@ export function spawnCreatureSafely(
   const damage = tier === 1 ? '1d6+1' : tier === 2 ? '1d8+2' : '2d6+2';
 
   // Find a clear spawn coordinate distant from players
-  const heroX = state.characters[0]?.x ?? 4;
-  const heroY = state.characters[0]?.y ?? 4;
-  const spawnX = (heroX + 4) % 8;
-  const spawnY = (heroY + 3) % 8;
+  const hero =
+    focusHero ||
+    state.characters[0];
+
+  const point =
+    clampGridPoint(
+      hero?.biome ||
+        state.biome ||
+        'forest',
+      (hero?.x ?? 4) + 4,
+      (hero?.y ?? 4) + 3
+    );
+
+  const spawnX =
+    point.x;
+
+  const spawnY =
+    point.y;
 
   const newEnemy: Enemy = {
     id: `director-mob-${Date.now()}`,
@@ -290,7 +477,8 @@ export function executeDirectorIntent(
   intent: DirectorIntentType,
   payload: Record<string, any>,
   state: State,
-  roomId: string = 'mmo-world-village'
+  roomId: string = 'mmo-world-village',
+  focusHero?: Character
 ): DirectorDecision {
   const mem = getRoomMemory(roomId);
   const now = Date.now();
@@ -333,7 +521,7 @@ export function executeDirectorIntent(
     case 'request_creature_spawn': {
       const creatureName = String(payload.creatureName || 'Rastreador de Cinzas').slice(0, 40);
       const tier = Math.max(1, Math.min(3, Number(payload.tier) || 1)) as ItemTier;
-      const res = spawnCreatureSafely(state, creatureName, tier, false);
+      const res = spawnCreatureSafely(state, creatureName, tier, false, focusHero);
       decision.validation = { approved: res.approved, reason: res.reason };
       decision.narrativeLog = res.reason;
       if (res.approved) {
@@ -411,14 +599,31 @@ export function executeDirectorIntent(
         const desc = String(payload.description || 'Descansa próximo à fogueira com olhar cansado.').slice(0, 150);
 
         if (!state.npcs) state.npcs = [];
+
+        const npcPoint =
+          clampGridPoint(
+            focusHero?.biome ||
+              state.biome ||
+              'village',
+            (focusHero?.x ?? 2) +
+              2,
+            (focusHero?.y ?? 4) +
+              1
+          );
+
         state.npcs.push({
           id: `temp-npc-${Date.now()}`,
           name: npcName,
           role,
           description: desc,
-          biome: state.biome || 'village',
-          x: 4,
-          y: 5,
+          biome:
+            focusHero?.biome ||
+            state.biome ||
+            'village',
+          x:
+            npcPoint.x,
+          y:
+            npcPoint.y,
           icon: 'User',
           dialogue: [
             'Saudações! Cuidado com os caminhos que levam além dos limites da vila.',

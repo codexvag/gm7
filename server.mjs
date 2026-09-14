@@ -28,7 +28,7 @@ function ensureRoomHooked(roomId) {
   if (!roomId || hookedRooms.has(roomId)) return;
   hookedRooms.add(roomId);
 
-  const eventName = roomId === 'mmo-world-village' ? 'room:mmo-world-village:all' : `room:${roomId}`;
+  const eventName = `room:${roomId}`;
   roomEventBus.on(eventName, (payload) => {
     const targetRoomId = payload.roomId || roomId;
     const roomClients = rooms.get(targetRoomId);
@@ -121,16 +121,20 @@ wss.on('connection', (ws, request) => {
   });
 });
 
-server.on('upgrade', (request, socket, head) => {
-  const pathname = new URL(request.url, `http://${request.headers.host}`).pathname;
-  if (pathname === '/api/game/ws') {
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws, request);
-    });
-  } else {
-    socket.destroy();
-  }
+server.on('upgrade', (request, socket) => {
+  // POLISH_B_WS_DISABLED
+  // Native WS previously trusted room/userId from query strings.
+  // Realtime remains available through authenticated same-origin SSE.
+  try {
+    socket.write(
+      'HTTP/1.1 403 Forbidden\r\n' +
+      'Connection: close\r\n' +
+      '\r\n'
+    );
+  } catch {}
+  socket.destroy();
 });
+
 
 const clientDist = path.join(__dirname, 'dist', 'client');
 if (fs.existsSync(clientDist)) {
@@ -159,48 +163,6 @@ function createFetchRequest(req) {
 
 app.use(express.json());
 
-// Native Server-Sent Events (SSE) stream endpoint for real-time multiplayer updates
-app.get('/api/game/stream', (req, res) => {
-  const roomId = req.query.room || 'mmo-world-village';
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no'
-  });
-  if (typeof res.flushHeaders === 'function') {
-    res.flushHeaders();
-  }
-  res.write(`event: connected\ndata: ${JSON.stringify({ roomId, timestamp: Date.now() })}\n\n`);
-
-  const onUpdate = (payload) => {
-    try {
-      res.write(`event: update\ndata: ${JSON.stringify(payload)}\n\n`);
-    } catch {}
-  };
-
-  const eventName = roomId === 'mmo-world-village' ? 'room:mmo-world-village:all' : `room:${roomId}`;
-  roomEventBus.on(eventName, onUpdate);
-  if (roomId === 'mmo-world-village') {
-    roomEventBus.on('room:mmo-world-village', onUpdate);
-  }
-
-  const pingTimer = setInterval(() => {
-    try {
-      res.write(': ping\n\n');
-    } catch {
-      clearInterval(pingTimer);
-    }
-  }, 15000);
-
-  req.on('close', () => {
-    clearInterval(pingTimer);
-    roomEventBus.off(eventName, onUpdate);
-    if (roomId === 'mmo-world-village') {
-      roomEventBus.off('room:mmo-world-village', onUpdate);
-    }
-  });
-});
 
 app.all('/{*splat}', async (req, res) => {
   try {

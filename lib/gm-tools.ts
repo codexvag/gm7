@@ -324,6 +324,12 @@ export function executeServerAuthoritativeGmTool(
       const xp = Math.max(0, Number(rawArgs.xp || 0));
       const rawItemId = String(rawArgs.itemId || '').trim().toLowerCase();
       const itemName = String(rawArgs.itemName || (ITEMS_CATALOG[rawItemId]?.name) || rawItemId);
+      const itemData =
+        rawArgs.itemData &&
+        typeof rawArgs.itemData ===
+          'object'
+          ? rawArgs.itemData
+          : undefined;
       const targetId = String(rawArgs.targetHeroId || 'all');
       const reason = String(rawArgs.reason || 'Recompensa do Mestre');
 
@@ -350,6 +356,19 @@ export function executeServerAuthoritativeGmTool(
             itemName,
             1
           );
+
+          if (itemData) {
+            hero.inventoryItemData = {
+              ...(hero.inventoryItemData || {}),
+              [rawItemId]: {
+                ...itemData,
+                id:
+                  rawItemId,
+                name:
+                  itemName
+              }
+            };
+          }
         }
       }
 

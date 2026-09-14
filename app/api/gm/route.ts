@@ -5,6 +5,7 @@ import { isOriginAllowed } from '@/lib/auth-origin';
 import { GM_PROMPT } from '@/lib/gm-prompt';
 import pages from '@/lib/srd.json';
 import { entry, type State } from '@/lib/game-engine';
+import { mergeStates } from '@/lib/state-merge';
 import { readCompactWorldContext, executeDirectorIntent } from '@/lib/sandbox-director';
 import { generateProceduralItem, type ItemTier } from '@/lib/procedural-items';
 import { MICRO_ADVENTURES } from '@/lib/micro-adventures';
@@ -154,7 +155,8 @@ export async function POST(req: NextRequest) {
     const directorContext =
       readCompactWorldContext(
         state,
-        room.id
+        room.id,
+        actorHero
       );
 
     const recentHistory =
@@ -243,10 +245,12 @@ export async function POST(req: NextRequest) {
             null,
 
           progresso:
+            actorHero?.questProgress ||
             state.questProgress ||
             {},
 
           consequencias:
+            actorHero?.worldFlags ||
             state.worldFlags ||
             {},
 
@@ -590,8 +594,9 @@ export async function POST(req: NextRequest) {
                     ).slice(0, 200)
                 },
                 latestState,
-                room.id
-              );
+              room.id,
+              latestActorHero
+            );
 
             if (
               decision.validation.approved
@@ -720,7 +725,8 @@ export async function POST(req: NextRequest) {
                   ).slice(0, 180)
               },
               latestState,
-              room.id
+              room.id,
+              latestActorHero
             );
 
           if (
@@ -789,7 +795,8 @@ export async function POST(req: NextRequest) {
                   ).slice(0, 180)
               },
               latestState,
-              room.id
+              room.id,
+              latestActorHero
             );
 
           executedTools.push({
@@ -907,7 +914,8 @@ export async function POST(req: NextRequest) {
                   ).slice(0, 180)
               },
               latestState,
-              room.id
+              room.id,
+              latestActorHero
             );
 
           executedTools.push({
@@ -947,7 +955,8 @@ export async function POST(req: NextRequest) {
                   ).slice(0, 180)
               },
               latestState,
-              room.id
+              room.id,
+              latestActorHero
             );
 
           executedTools.push({
@@ -987,7 +996,8 @@ export async function POST(req: NextRequest) {
                   ).slice(0, 180)
               },
               latestState,
-              room.id
+              room.id,
+              latestActorHero
             );
 
           executedTools.push({
@@ -1134,6 +1144,9 @@ export async function POST(req: NextRequest) {
                   itemName:
                     generatedItem.name,
 
+                  itemData:
+                    { ...generatedItem },
+
                   gold:
                     0,
 
@@ -1175,10 +1188,66 @@ export async function POST(req: NextRequest) {
       latestState.logs.push({ ...entry(answer, 'gm'), sources });
       latestState.logs = latestState.logs.slice(-200);
 
-      await db
-        .prepare('UPDATE rooms SET state=?,version=version+1 WHERE id=? AND version=?')
-        .bind(JSON.stringify(latestState), room.id, latestRoom.version)
-        .run();
+      const updateResult =
+        await db
+          .prepare(
+            'UPDATE rooms SET state=?,version=version+1 WHERE id=? AND version=?'
+          )
+          .bind(
+            JSON.stringify(
+              latestState
+            ),
+            room.id,
+            latestRoom.version
+          )
+          .run();
+
+      if (
+        !(
+          updateResult?.meta?.changes ??
+          updateResult?.changes ??
+          0
+        )
+      ) {
+        const fresh =
+          await db
+            .prepare(
+              'SELECT state,version FROM rooms WHERE id=?'
+            )
+            .bind(
+              room.id
+            )
+            .first<{
+              state: string;
+              version: number;
+            }>();
+
+        if (fresh) {
+          const merged =
+            mergeStates(
+              JSON.parse(
+                fresh.state
+              ),
+              latestState,
+              fresh.version,
+              latestRoom.version +
+                1
+            );
+
+          await db
+            .prepare(
+              'UPDATE rooms SET state=?,version=version+1 WHERE id=? AND version=?'
+            )
+            .bind(
+              JSON.stringify(
+                merged
+              ),
+              room.id,
+              fresh.version
+            )
+            .run();
+        }
+      }
     }
 
     return NextResponse.json({ ok: true, answer, choices, executedTools, searchHtml });

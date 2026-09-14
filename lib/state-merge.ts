@@ -1,85 +1,530 @@
-import type { Character, Enemy, Log, State, GroundCorpse } from './game-engine';
+import type {
+  Character,
+  Enemy,
+  GroundCorpse,
+  Log,
+  NpcEntity,
+  State,
+  WorldActivityState
+} from './game-engine';
 
-// Cross-instance (multi-isolate Cloudflare) optimistic merge utilities.
-// Local RAM / client state is merged with D1 / server snapshots per-entity by
-// freshness (updatedAt), instead of whole-state "highest version wins".
-// This prevents players being reset to spawn or disappearing when two
-// isolates diverge on the version counter.
+export function touchChar(
+  value: {
+    updatedAt?: number;
+    lastSeen?: number;
+  }
+): void {
+  const now =
+    Date.now();
 
-export function touchChar(c: { updatedAt?: number; lastSeen?: number }): void {
-  const now = Date.now();
-  c.updatedAt = now;
-  c.lastSeen = now;
+  value.updatedAt =
+    now;
+
+  value.lastSeen =
+    now;
 }
 
-function isNewer(base: number | undefined, incoming: number | undefined): boolean {
-  return (base ?? 0) < (incoming ?? 0);
+function isNewer(
+  base?: number,
+  incoming?: number
+): boolean {
+  return (
+    (incoming ?? 0) >
+    (base ?? 0)
+  );
 }
 
 export function mergeCharacters(
   base: Character[],
   incoming: Character[],
-  incomingIsAuthoritative: boolean = false
+  incomingIsAuthoritative = false
 ): Character[] {
-  if (incomingIsAuthoritative) {
-    // When incoming is authoritatively newer (e.g. server removed a disconnected player),
-    // incoming is the source of truth for the active entity set.
-    const baseMap = new Map<string, Character>();
-    for (const c of base) baseMap.set(c.id, c);
+  if (
+    incomingIsAuthoritative
+  ) {
+    const baseMap =
+      new Map<
+        string,
+        Character
+      >();
 
-    return incoming.map((inc) => {
-      const b = baseMap.get(inc.id);
-      if (b && isNewer(inc.updatedAt, b.updatedAt)) {
-        return b;
+    for (
+      const character of
+      base
+    ) {
+      baseMap.set(
+        character.id,
+        character
+      );
+    }
+
+    return incoming.map(
+      (candidate) => {
+        const existing =
+          baseMap.get(
+            candidate.id
+          );
+
+        if (
+          existing &&
+          isNewer(
+            candidate.updatedAt,
+            existing.updatedAt
+          )
+        ) {
+          return existing;
+        }
+
+        return candidate;
       }
-      return inc;
-    });
+    );
   }
 
-  const map = new Map<string, Character>();
-  for (const c of base) map.set(c.id, c);
-  for (const c of incoming) {
-    const existing = map.get(c.id);
-    if (!existing) {
-      map.set(c.id, c);
-    } else if (isNewer(existing.updatedAt, c.updatedAt)) {
-      map.set(c.id, c);
+  const result =
+    new Map<
+      string,
+      Character
+    >();
+
+  for (
+    const character of
+    base
+  ) {
+    result.set(
+      character.id,
+      character
+    );
+  }
+
+  for (
+    const candidate of
+    incoming
+  ) {
+    const existing =
+      result.get(
+        candidate.id
+      );
+
+    if (
+      !existing ||
+      isNewer(
+        existing.updatedAt,
+        candidate.updatedAt
+      )
+    ) {
+      result.set(
+        candidate.id,
+        candidate
+      );
     }
   }
-  return Array.from(map.values());
+
+  return Array.from(
+    result.values()
+  );
 }
 
-export function mergeEnemies(base: Enemy[], incoming: Enemy[]): Enemy[] {
-  const map = new Map<string, Enemy>();
-  for (const e of base) map.set(e.id, e);
-  for (const e of incoming) {
-    const existing = map.get(e.id);
-    if (!existing) {
-      map.set(e.id, e);
-    } else if (isNewer(existing.updatedAt, e.updatedAt)) {
-      map.set(e.id, e);
+export function mergeEnemies(
+  base: Enemy[],
+  incoming: Enemy[]
+): Enemy[] {
+  const result =
+    new Map<
+      string,
+      Enemy
+    >();
+
+  for (
+    const enemy of
+    base
+  ) {
+    result.set(
+      enemy.id,
+      enemy
+    );
+  }
+
+  for (
+    const candidate of
+    incoming
+  ) {
+    const existing =
+      result.get(
+        candidate.id
+      );
+
+    if (
+      !existing ||
+      isNewer(
+        existing.updatedAt,
+        candidate.updatedAt
+      )
+    ) {
+      result.set(
+        candidate.id,
+        candidate
+      );
     }
   }
-  return Array.from(map.values());
+
+  return Array.from(
+    result.values()
+  );
 }
 
-export function mergeCorpses(base: GroundCorpse[] = [], incoming: GroundCorpse[] = []): GroundCorpse[] {
-  const map = new Map<string, GroundCorpse>();
-  for (const c of base) map.set(c.id, c);
-  for (const c of incoming) {
-    if (!map.has(c.id)) map.set(c.id, c);
+export function mergeCorpses(
+  base: GroundCorpse[] = [],
+  incoming: GroundCorpse[] = []
+): GroundCorpse[] {
+  const result =
+    new Map<
+      string,
+      GroundCorpse
+    >();
+
+  for (
+    const corpse of
+    base
+  ) {
+    result.set(
+      corpse.id,
+      corpse
+    );
   }
-  return Array.from(map.values());
+
+  for (
+    const corpse of
+    incoming
+  ) {
+    if (
+      !result.has(
+        corpse.id
+      )
+    ) {
+      result.set(
+        corpse.id,
+        corpse
+      );
+    }
+  }
+
+  return Array.from(
+    result.values()
+  );
 }
 
-export function mergeLogs(base: Log[], incoming: Log[]): Log[] {
-  const map = new Map<string, Log>();
-  for (const l of base) map.set(l.id, l);
-  for (const l of incoming) {
-    if (!map.has(l.id)) map.set(l.id, l);
+export function mergeLogs(
+  base: Log[],
+  incoming: Log[]
+): Log[] {
+  const result =
+    new Map<
+      string,
+      Log
+    >();
+
+  for (
+    const log of
+    base
+  ) {
+    result.set(
+      log.id,
+      log
+    );
   }
-  return Array.from(map.values()).sort((a, b) =>
-    a.time < b.time ? -1 : a.time > b.time ? 1 : 0
+
+  for (
+    const log of
+    incoming
+  ) {
+    if (
+      !result.has(
+        log.id
+      )
+    ) {
+      result.set(
+        log.id,
+        log
+      );
+    }
+  }
+
+  return Array.from(
+    result.values()
+  )
+    .sort(
+      (left, right) =>
+        left.time <
+        right.time
+          ? -1
+          : left.time >
+              right.time
+            ? 1
+            : 0
+    )
+    .slice(-200);
+}
+
+export function mergeNpcs(
+  base: NpcEntity[] = [],
+  incoming: NpcEntity[] = []
+): NpcEntity[] {
+  const result =
+    new Map<
+      string,
+      NpcEntity
+    >();
+
+  for (
+    const npc of
+    base
+  ) {
+    result.set(
+      npc.id,
+      npc
+    );
+  }
+
+  for (
+    const candidate of
+    incoming
+  ) {
+    const existing =
+      result.get(
+        candidate.id
+      );
+
+    if (!existing) {
+      result.set(
+        candidate.id,
+        candidate
+      );
+
+      continue;
+    }
+
+    const existingTime =
+      existing.lastInteractionAt ||
+      0;
+
+    const incomingTime =
+      candidate.lastInteractionAt ||
+      0;
+
+    const winner =
+      incomingTime >=
+        existingTime
+        ? candidate
+        : existing;
+
+    const memoryMap =
+      new Map<
+        string,
+        any
+      >();
+
+    for (
+      const memory of
+      [
+        ...(existing.memories ||
+          []),
+        ...(candidate.memories ||
+          [])
+      ]
+    ) {
+      const key =
+        String(
+          memory.timestamp ||
+          0
+        ) +
+        '|' +
+        String(
+          memory.heroId ||
+          ''
+        ) +
+        '|' +
+        String(
+          memory.summary ||
+          ''
+        );
+
+      memoryMap.set(
+        key,
+        memory
+      );
+    }
+
+    result.set(
+      candidate.id,
+      {
+        ...winner,
+        memories:
+          Array.from(
+            memoryMap.values()
+          )
+            .sort(
+              (left, right) =>
+                (
+                  left.timestamp ||
+                  0
+                ) -
+                (
+                  right.timestamp ||
+                  0
+                )
+            )
+            .slice(-16)
+      }
+    );
+  }
+
+  return Array.from(
+    result.values()
+  );
+}
+
+function mergeBooleanRecord(
+  base:
+    | Record<
+        string,
+        boolean
+      >
+    | undefined,
+  incoming:
+    | Record<
+        string,
+        boolean
+      >
+    | undefined
+): Record<
+  string,
+  boolean
+> {
+  const result = {
+    ...(base || {})
+  };
+
+  for (
+    const [
+      key,
+      value
+    ] of
+    Object.entries(
+      incoming || {}
+    )
+  ) {
+    result[key] =
+      Boolean(
+        result[key] ||
+        value
+      );
+  }
+
+  return result;
+}
+
+function mergeActivities(
+  base:
+    | Record<
+        string,
+        WorldActivityState
+      >
+    | undefined,
+  incoming:
+    | Record<
+        string,
+        WorldActivityState
+      >
+    | undefined
+): Record<
+  string,
+  WorldActivityState
+> {
+  const result = {
+    ...(base || {})
+  };
+
+  for (
+    const [
+      id,
+      activity
+    ] of
+    Object.entries(
+      incoming || {}
+    )
+  ) {
+    const existing =
+      result[id];
+
+    if (
+      !existing ||
+      (
+        activity.updatedAt ||
+        0
+      ) >=
+      (
+        existing.updatedAt ||
+        0
+      )
+    ) {
+      result[id] =
+        activity;
+    }
+  }
+
+  return result;
+}
+
+function mergePartyInvites(
+  base: any[] = [],
+  incoming: any[] = []
+): any[] {
+  const result =
+    new Map<
+      string,
+      any
+    >();
+
+  for (
+    const invite of
+    [
+      ...base,
+      ...incoming
+    ]
+  ) {
+    const id =
+      String(
+        invite?.id ||
+        ''
+      );
+
+    if (!id) {
+      continue;
+    }
+
+    const existing =
+      result.get(id);
+
+    if (
+      !existing ||
+      (
+        invite.timestamp ||
+        0
+      ) >=
+      (
+        existing.timestamp ||
+        0
+      )
+    ) {
+      result.set(
+        id,
+        invite
+      );
+    }
+  }
+
+  return Array.from(
+    result.values()
   );
 }
 
@@ -89,28 +534,112 @@ export function mergeStates(
   baseVersion: number,
   incomingVersion: number
 ): State {
-  const baseU = base.updatedAt ?? 0;
-  const incU = incoming.updatedAt ?? 0;
+  const incomingWinsScalars =
+    incomingVersion >
+      baseVersion ||
+    (
+      incomingVersion ===
+        baseVersion &&
+      (
+        incoming.updatedAt ||
+        0
+      ) >
+      (
+        base.updatedAt ||
+        0
+      )
+    );
 
-  let useIncomingScalars: boolean;
-  if (baseU === 0 && incU === 0) {
-    // Legacy states without timestamps: fall back to version counter.
-    useIncomingScalars = incomingVersion >= baseVersion;
-  } else if (incU === 0) {
-    useIncomingScalars = false; // base was touched, incoming is stale
-  } else if (baseU === 0) {
-    useIncomingScalars = true; // incoming was touched
-  } else {
-    useIncomingScalars = incU >= baseU;
-  }
+  const winner =
+    incomingWinsScalars
+      ? incoming
+      : base;
 
-  const winner = useIncomingScalars ? incoming : base;
-  const merged: State = {
+  const economyBase =
+    base.economyContext;
+
+  const economyIncoming =
+    incoming.economyContext;
+
+  const economy =
+    !economyBase
+      ? economyIncoming
+      : !economyIncoming
+        ? economyBase
+        : (
+            economyIncoming.updatedAt ||
+            0
+          ) >=
+          (
+            economyBase.updatedAt ||
+            0
+          )
+          ? economyIncoming
+          : economyBase;
+
+  return {
     ...winner,
-    characters: mergeCharacters(base.characters, incoming.characters, useIncomingScalars),
-    enemies: mergeEnemies(base.enemies, incoming.enemies),
-    corpses: mergeCorpses(base.corpses, incoming.corpses),
-    logs: mergeLogs(base.logs, incoming.logs).slice(-200)
+    worldSchemaVersion:
+      Math.max(
+        base.worldSchemaVersion ||
+          0,
+        incoming.worldSchemaVersion ||
+          0
+      ),
+    characters:
+      mergeCharacters(
+        base.characters || [],
+        incoming.characters || [],
+        incomingWinsScalars
+      ),
+    enemies:
+      mergeEnemies(
+        base.enemies || [],
+        incoming.enemies || []
+      ),
+    corpses:
+      mergeCorpses(
+        base.corpses || [],
+        incoming.corpses || []
+      ),
+    npcs:
+      mergeNpcs(
+        base.npcs || [],
+        incoming.npcs || []
+      ),
+    logs:
+      mergeLogs(
+        base.logs || [],
+        incoming.logs || []
+      ),
+    questProgress:
+      mergeBooleanRecord(
+        base.questProgress,
+        incoming.questProgress
+      ),
+    worldFlags:
+      mergeBooleanRecord(
+        base.worldFlags,
+        incoming.worldFlags
+      ),
+    activities:
+      mergeActivities(
+        base.activities,
+        incoming.activities
+      ),
+    partyInvites:
+      mergePartyInvites(
+        base.partyInvites,
+        incoming.partyInvites
+      ),
+    economyContext:
+      economy,
+    updatedAt:
+      Math.max(
+        base.updatedAt ||
+          0,
+        incoming.updatedAt ||
+          0
+      )
   };
-  return merged;
 }

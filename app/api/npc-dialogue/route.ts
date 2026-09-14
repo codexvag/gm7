@@ -336,7 +336,8 @@ export async function POST(
     const world =
       readCompactWorldContext(
         state,
-        room.id
+        room.id,
+        hero
       );
 
     const conversation =
@@ -413,13 +414,13 @@ export async function POST(
 
         campanha: {
           progresso:
-            state.questProgress ||
             hero?.questProgress ||
+            state.questProgress ||
             {},
 
           consequencias:
-            state.worldFlags ||
             hero?.worldFlags ||
+            state.worldFlags ||
             {},
 
           economia:
@@ -705,18 +706,144 @@ export async function POST(
      * Em conflito de versao, a conversa ainda responde,
      * mas nunca sobrescreve uma acao mecanica mais nova.
      */
-    await db
-      .prepare(
-        'UPDATE rooms SET state=?,version=version+1 WHERE id=? AND version=?'
+    // POLISH_B_NPC_MEMORY_RETRY
+    const memoryWrite =
+      await db
+        .prepare(
+          'UPDATE rooms SET state=?,version=version+1 WHERE id=? AND version=?'
+        )
+        .bind(
+          JSON.stringify(
+            state
+          ),
+          room.id,
+          room.version
+        )
+        .run();
+
+    if (
+      !(
+        memoryWrite?.meta?.changes ??
+        memoryWrite?.changes ??
+        0
       )
-      .bind(
-        JSON.stringify(
-          state
-        ),
-        room.id,
-        room.version
-      )
-      .run();
+    ) {
+      const fresh =
+        await db
+          .prepare(
+            'SELECT state,version FROM rooms WHERE id=?'
+          )
+          .bind(
+            room.id
+          )
+          .first<{
+            state: string;
+            version: number;
+          }>();
+
+      if (fresh) {
+        const latestState:
+          State =
+          JSON.parse(
+            fresh.state
+          );
+
+        const latestNpc =
+          latestState.npcs.find(
+            (candidate) =>
+              candidate.id ===
+              npc.id
+          );
+
+        if (latestNpc) {
+          const memoryMap =
+            new Map<
+              string,
+              any
+            >();
+
+          for (
+            const memory of
+            [
+              ...(latestNpc.memories ||
+                []),
+              ...(npc.memories ||
+                [])
+            ]
+          ) {
+            const key =
+              String(
+                memory.timestamp ||
+                0
+              ) +
+              '|' +
+              String(
+                memory.summary ||
+                ''
+              );
+
+            memoryMap.set(
+              key,
+              memory
+            );
+          }
+
+          latestNpc.memories =
+            Array.from(
+              memoryMap.values()
+            )
+              .sort(
+                (left, right) =>
+                  (
+                    left.timestamp ||
+                    0
+                  ) -
+                  (
+                    right.timestamp ||
+                    0
+                  )
+              )
+              .slice(-16);
+
+          latestNpc.lastInteractionAt =
+            Math.max(
+              latestNpc.lastInteractionAt ||
+                0,
+              npc.lastInteractionAt ||
+                0
+            );
+
+          latestNpc.personality =
+            npc.personality ||
+            latestNpc.personality;
+
+          latestNpc.history =
+            npc.history ||
+            latestNpc.history;
+
+          latestNpc.currentGoal =
+            npc.currentGoal ||
+            latestNpc.currentGoal;
+
+          latestNpc.secret =
+            npc.secret ||
+            latestNpc.secret;
+
+          await db
+            .prepare(
+              'UPDATE rooms SET state=?,version=version+1 WHERE id=? AND version=?'
+            )
+            .bind(
+              JSON.stringify(
+                latestState
+              ),
+              room.id,
+              fresh.version
+            )
+            .run();
+        }
+      }
+    }
 
     return NextResponse.json({
       ok:

@@ -85,12 +85,20 @@ import {
 } from '@/lib/campaign-progression';
 import { readCompactWorldContext, evaluateDirectorPacing, executeDirectorIntent } from '@/lib/sandbox-director';
 import { isGridTileWalkable, MAP_COLLISION_PROFILES, type CollisionPolygon } from '@/lib/collision-system';
-import { normalizeEnemyMapPosition } from '@/lib/map-bounds';
+import { normalizeEnemyMapPosition, clampGridPoint } from '@/lib/map-bounds';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { emitRoomUpdate } from '@/lib/room-events';
-import { touchChar } from '@/lib/state-merge';
+import { touchChar, mergeStates } from '@/lib/state-merge';
+import { travelPartyToLocation } from '@/lib/world-travel';
+import { ensureWorldSpine } from '@/lib/world-spine';
+import {
+  syncDungeonActivity,
+  extractDungeonActivity,
+  syncMicroAdventureActivity,
+  reconcileHeroActivity
+} from '@/lib/activity-service';
 
 const collisionZoneMemoryCache = new Map<string, { mtime: number; zones: CollisionPolygon[] }>();
 
@@ -431,6 +439,7 @@ export async function POST(req: NextRequest) {
     }
 
     let s: State = JSON.parse(r.state);
+    ensureWorldSpine(s);
     const currentUserId = user?.userId;
     const owner = isMmo || (currentUserId ? r.owner === currentUserId : false);
 
@@ -508,6 +517,11 @@ export async function POST(req: NextRequest) {
         s,
         killer,
         defeated
+      );
+
+      reconcileHeroActivity(
+        s,
+        killer
       );
 
       const xpReward =
@@ -645,6 +659,7 @@ export async function POST(req: NextRequest) {
     let clientAttackResult: AttackResult | null = null;
     let clientHealResult: { targetId: string; targetName: string; healAmount: number; hpAfter: number; maxHp: number } | null = null;
     let clientLootResult: { gold: number; items: string[]; x: number; y: number } | null = null;
+    let clientActivityResult: any = null;
 
     switch (a.action) {
       case 'character': {
@@ -2324,75 +2339,18 @@ export async function POST(req: NextRequest) {
         }
 
         if (target.hp <= 0) {
-          log(`💀 ${target.name} foi derrotado!`, 'gm');
-          const xpReward = getCreatureProfile(target.name).xpReward;
-          if (isMmo) {
-            const recipients = p.partyId
-              ? s.characters.filter((char) => char.partyId === p.partyId)
-              : [p];
-            for (const char of recipients) {
-              char.xp = (char.xp || 0) + xpReward;
-              touchChar(char);
-            }
-            log(`✨ ${p.partyId ? 'O grupo de ' + p.name : p.name + ' (Solo)'} recebeu +${xpReward} XP pela vitória contra ${target.name}!`, 'gm');
-          } else {
-            for (const char of s.characters) {
-              char.xp = (char.xp || 0) + xpReward;
-              touchChar(char);
-            }
-            log(`✨ Os heróis receberam +${xpReward} XP pela vitória contra ${target.name}!`, 'gm');
-          }
+          log(
+            '💀 ' +
+              target.name +
+              ' foi derrotado!',
+            'gm'
+          );
 
-          // Spawn interactive lootable corpse
-          try {
-            const mobLoot = generateMobLoot(target.name, target.maxHp || 10, (s.act || 1) as any);
-            if (!s.corpses) s.corpses = [];
-            const corpseBiome = target.biome || p.biome || s.biome || 'forest';
-            const corpse: GroundCorpse = {
-              id: `corpse-${target.id}-${Date.now()}`,
-              name: `Restos de ${target.name}`,
-              enemyName: target.name,
-              x: target.x ?? 4,
-              y: target.y ?? 4,
-              gold: mobLoot.gold,
-              items: mobLoot.items.map((it) => it.id),
-              itemData:
-                Object.fromEntries(
-                  mobLoot.items.map(
-                    (item) => [
-                      item.id,
-                      { ...item }
-                    ]
-                  )
-                ),
-              biome: corpseBiome,
-              slainBy: p.name,
-              createdAt: Date.now()
-            };
-            s.corpses.push(corpse);
-            log(`💀 ${target.name} tombou no chão [X:${corpse.x} Y:${corpse.y}]! Deixou ${corpse.gold} PO${mobLoot.items.length ? ' e ' + mobLoot.items.map((it) => it.name).join(', ') : ''}. Aproxime-se para saquear!`, 'gm');
-          } catch (err) {
-            console.error('[Corpse spawn error]:', err);
-          }
-        }
-
-        const myEnemies = (s.enemies || []).filter((e) => {
-          if (p.partyId) return !e.partyId || e.partyId === p.partyId;
-          return !e.ownerCharId || e.ownerCharId === p.id;
-        });
-        if (myEnemies.length > 0 && myEnemies.every((e) => e.hp <= 0)) {
-          const curBiome = p.biome || s.biome || 'village';
-          const curLoc = p.location ?? s.location ?? 0;
-          if (curBiome === 'forest' || curLoc === 1) {
-            recordProgression(p, { forest_cleared: true });
-          } else if (curBiome === 'dungeon' || curLoc === 2) {
-            recordProgression(p, { malakor_defeated: true });
-          }
-          s.combat = false;
-          s.combatPartyId = undefined;
-          s.order = (s.order || []).filter((id) => !myEnemies.some((e) => e.id === id) && id !== p.id && (!p.partyId || !s.characters.some((c) => c.partyId === p.partyId && c.id === id)));
-         s.actionUsed = false;
-          log('⚔️ Todos os inimigos foram vencidos! Vitória do grupo!', 'gm');
+          rewardSrdEnemyDefeat(
+            p,
+            target,
+            'Ataque'
+          );
         }
 
         // If client specified immediate end of turn, advance
@@ -3981,230 +3939,33 @@ export async function POST(req: NextRequest) {
 
       case 'location': {
         const p = own();
-        if (s.combat && (s.order || []).includes(p.id)) throw Error('Encerre o seu combate antes de viajar.');
-        const n = Number(a.location);
-        if (!locations[n]) throw Error('Local inválido.');
 
-        // ─── Progression gating: auto-advance narrative ───
-        const biomeTarget = locations[n]?.biome || 'forest';
-        if (biomeTarget === 'forest' && (!p.questProgress || !p.questProgress.doran_talked)) {
-          recordProgression(p, { doran_talked: true });
-          log('📜 Você segue para a Floresta dos Sussurros com a missão do Ancião Doran.', 'gm');
-        }
+        reconcileLegacyProgression(
+          s,
+          p
+        );
 
-        // Determine which heroes travel: solo hero or party members
-        const partyMembers = p.partyId
-          ? s.characters.filter((c) => c.partyId === p.partyId)
-          : [p];
-
-        for (const member of partyMembers) {
-          member.location = n;
-          member.biome = locations[n].biome;
-          member.act = (n + 1) as 1 | 2 | 3;
-          touchChar(member);
-        }
-
-        if (!isMmo) {
-          s.location = n;
-          s.biome = locations[n].biome;
-          s.act = (n + 1) as 1 | 2 | 3;
-        }
-
-        // Reposition traveling heroes to safe entrance coordinates in the destination biome
-        const spawnCoords: Record<string, { x: number; y: number }> = {
-          village: { x: 4, y: 5 },
-          forest: { x: 3, y: 3 },
-          ruins: { x: 3, y: 6 },
-          dungeon: { x: 4, y: 6 },
-          canyon: { x: 3, y: 6 },
-          lair: { x: 3, y: 6 }
-        };
-        const pos = spawnCoords[locations[n].biome] || { x: 4, y: 5 };
-        for (let i = 0; i < partyMembers.length; i++) {
-          partyMembers[i].x = pos.x + (i % 2);
-          partyMembers[i].y = pos.y + Math.floor(i / 2);
-          touchChar(partyMembers[i]);
-        }
-
-        // Remove previous enemies belonging to this party / solo player
-        const partyId = p.partyId;
-        s.enemies = (s.enemies || []).filter((e) => {
-          if (partyId && e.partyId === partyId) return false;
-          if (!partyId && (e.ownerCharId === p.id || (!e.partyId && !e.ownerCharId && !isMmo))) return false;
-          return true;
-        });
-
-        // Configure enemies appropriate for destination biome (scoped to this party / hero)
-        let newBiomeEnemies: Enemy[] = [];
-        if (locations[n].biome === 'forest') {
-          newBiomeEnemies = [
+        const result =
+          travelPartyToLocation(
+            s,
+            p,
+            Number(
+              a.location
+            ),
             {
-              id: crypto.randomUUID(),
-              name: 'Sentinela de Cinzas',
-              hp: 9,
-              maxHp: 9,
-              ac: 11,
-              attack: 2,
-              damage: '1d4+1',
-              initiative: 0,
-              x: 7,
-              y: 3
-            },
-            {
-              id: crypto.randomUUID(),
-              name: 'Lobo das Sombras',
-              hp: 8,
-              maxHp: 8,
-              ac: 11,
-              attack: 2,
-              damage: '1d4+1',
-              initiative: 0,
-              x: 6,
-              y: 2
+              isMmo
             }
-          ];
-        } else if (locations[n].biome === 'ruins') {
-          newBiomeEnemies = [
-            {
-              id: crypto.randomUUID(),
-              name: 'Fanático do Fogo Negro',
-              hp: 16,
-              maxHp: 16,
-              ac: 13,
-              attack: 4,
-              damage: '1d6+2',
-              initiative: 0,
-              x: 6,
-              y: 3
-            },
-            {
-              id: crypto.randomUUID(),
-              name: 'Cultista Brutamontes',
-              hp: 14,
-              maxHp: 14,
-              ac: 12,
-              attack: 3,
-              damage: '1d8+1',
-              initiative: 0,
-              x: 7,
-              y: 4
-            }
-          ];
-        } else if (locations[n].biome === 'dungeon') {
-          newBiomeEnemies = [
-            {
-              id: crypto.randomUUID(),
-              name: 'Guardião Espectral',
-              hp: 18,
-              maxHp: 18,
-              ac: 13,
-              attack: 3,
-              damage: '1d6+2',
-              initiative: 0,
-              x: 5,
-              y: 2
-            },
-            {
-              id: crypto.randomUUID(),
-              name: 'Escriba Sombrio',
-              hp: 11,
-              maxHp: 11,
-              ac: 11,
-              attack: 2,
-              damage: '1d6',
-              initiative: 0,
-              x: 6,
-              y: 4
-            }
-          ];
-        } else if (locations[n].biome === 'canyon') {
-          newBiomeEnemies = [
-            {
-              id: crypto.randomUUID(),
-              name: 'Wyrmling Vermelho da Fenda',
-              hp: 24,
-              maxHp: 24,
-              ac: 14,
-              attack: 5,
-              damage: '2d6+2',
-              initiative: 0,
-              x: 7,
-              y: 3
-            },
-            {
-              id: crypto.randomUUID(),
-              name: 'Guerreiro Draconiano',
-              hp: 16,
-              maxHp: 16,
-              ac: 13,
-              attack: 4,
-              damage: '1d8+2',
-              initiative: 0,
-              x: 6,
-              y: 4
-            }
-          ];
-        } else if (locations[n].biome === 'lair') {
-          newBiomeEnemies = [
-            {
-              id: crypto.randomUUID(),
-              name: 'Ignisrax, o Dragão Vermelho',
-              hp: 55,
-              maxHp: 55,
-              ac: 16,
-              attack: 6,
-              damage: '2d8+3',
-              initiative: 0,
-              x: 6,
-              y: 2
-            },
-            {
-              id: crypto.randomUUID(),
-              name: 'Sentinela de Obsidiana',
-              hp: 18,
-              maxHp: 18,
-              ac: 14,
-              attack: 4,
-              damage: '1d8+2',
-              initiative: 0,
-              x: 4,
-              y: 3
-            }
-          ];
+          );
+
+        if (!result.success) {
+          throw Error(
+            result.reason
+          );
         }
 
-        for (const e of newBiomeEnemies) {
-          e.biome = locations[n].biome;
-          e.partyId = partyId;
-          e.ownerCharId = partyId ? undefined : p.id;
-          touchChar(e);
-        }
-        s.enemies.push(...newBiomeEnemies);
-
-        // Reset combat for traveling heroes
-        s.order = (s.order || []).filter((id) => !partyMembers.some((m) => m.id === id));
-        if (!s.characters.some((c) => (s.order || []).includes(c.id))) {
-          s.combat = false;
-          s.round = 0;
-          s.turn = 0;
-        }
-        s.actionUsed = false;
-        s.bonusActionUsed = false;
-        s.movementUsed = 0;
-        s.movementBonusSquares = 0;
-        s.spellSlotUsedThisTurn = false;
-
-        if (locations[n].biome === 'dungeon' || n === 2) {
-          recordProgression(p, { dungeon_entered: true });
-        }
-
-        const partyLabel = partyMembers.length > 1 ? `O grupo de ${p.name}` : p.name;
-        log(`${partyLabel} viajou para ${locations[n].name}. ${locations[n].text}`, 'gm');
-        if (newBiomeEnemies.length > 0) {
-          log(`⚠️ Criaturas hostis espreitam os arredores. Prepare-se para o combate ou explore a área.`, 'gm');
-        }
         break;
       }
+
       case 'advanceAct': {
         const p = own();
 
@@ -4224,18 +3985,13 @@ export async function POST(req: NextRequest) {
           next.location === null
         ) {
           log(
-            '?? ' +
+            '📜 ' +
               next.reason,
             'gm'
           );
-
           break;
         }
 
-        /*
-         * Village objectives must be played.
-         * Continue never auto-completes NPC dialogue.
-         */
         if (
           next.location === 0
         ) {
@@ -4244,366 +4000,27 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        if (
-          !locations[
-            next.location
-          ]
-        ) {
-          throw Error(
-            'Destino da campanha inv?lido.'
-          );
-        }
-
-        /*
-         * Same travel validation used by the campaign proof engine.
-         */
-        const permission =
-          getTravelPermission(
+        const result =
+          travelPartyToLocation(
             s,
             p,
-            next.location
+            next.location,
+            {
+              isMmo
+            }
           );
 
-        if (
-          !permission.allowed
-        ) {
+        if (!result.success) {
           throw Error(
-            permission.reason ||
-            'Esta regi?o ainda n?o foi desbloqueada.'
+            result.reason
           );
-        }
-
-        const targetLocation =
-          next.location;
-
-        const targetBiome =
-          locations[
-            targetLocation
-          ].biome;
-
-        const partyMembers =
-          p.partyId
-            ? s.characters.filter(
-                (member) =>
-                  member.partyId ===
-                  p.partyId
-              )
-            : [p];
-
-        /*
-         * Remove enemies belonging to the hero/party
-         * from the previous region before moving.
-         */
-        const oldEnemyIds =
-          new Set(
-            (s.enemies || [])
-              .filter(
-                (enemy) =>
-                  p.partyId
-                    ? enemy.partyId ===
-                      p.partyId
-                    : enemy.ownerCharId ===
-                      p.id
-              )
-              .map(
-                (enemy) =>
-                  enemy.id
-              )
-          );
-
-        s.enemies =
-          (s.enemies || [])
-            .filter(
-              (enemy) =>
-                !oldEnemyIds.has(
-                  enemy.id
-                )
-            );
-
-        const spawnCoords:
-          Record<
-            string,
-            {
-              x: number;
-              y: number;
-            }
-          > = {
-            village: {
-              x: 4,
-              y: 5
-            },
-
-            forest: {
-              x: 3,
-              y: 3
-            },
-
-            ruins: {
-              x: 3,
-              y: 6
-            },
-
-            dungeon: {
-              x: 4,
-              y: 6
-            },
-
-            canyon: {
-              x: 3,
-              y: 6
-            },
-
-            lair: {
-              x: 3,
-              y: 6
-            }
-          };
-
-        const spawn =
-          spawnCoords[
-            targetBiome
-          ] ||
-          {
-            x: 4,
-            y: 5
-          };
-
-        for (
-          let index = 0;
-          index <
-          partyMembers.length;
-          index++
-        ) {
-          const member =
-            partyMembers[
-              index
-            ];
-
-          member.location =
-            targetLocation;
-
-          member.biome =
-            targetBiome;
-
-          member.act =
-            (
-              targetLocation >= 4
-                ? 3
-                : targetLocation >= 2
-                  ? 2
-                  : 1
-            );
-
-          member.x =
-            spawn.x +
-            (
-              index %
-              2
-            );
-
-          member.y =
-            spawn.y +
-            Math.floor(
-              index /
-              2
-            );
-
-          touchChar(
-            member
-          );
-        }
-
-        /*
-         * Keep legacy global state coherent in private rooms.
-         */
-        s.location =
-          targetLocation;
-
-        s.biome =
-          targetBiome;
-
-        s.act =
-          (
-            targetLocation >= 4
-              ? 3
-              : targetLocation >= 2
-                ? 2
-                : 1
-          );
-
-        const removalIds =
-          new Set([
-            ...partyMembers.map(
-              (member) =>
-                member.id
-            ),
-            ...oldEnemyIds
-          ]);
-
-        s.order =
-          (s.order || [])
-            .filter(
-              (id) =>
-                !removalIds.has(
-                  id
-                )
-            );
-
-        if (
-          s.combatPartyId ===
-          (
-            p.partyId ||
-            p.id
-          )
-        ) {
-          s.combat =
-            false;
-
-          s.combatPartyId =
-            undefined;
-
-          s.turn =
-            0;
-
-          s.round =
-            0;
-        }
-
-        s.actionUsed =
-          false;
-
-        s.bonusActionUsed =
-          false;
-
-        s.movementUsed =
-          0;
-
-        s.movementBonusSquares =
-          0;
-
-        s.spellSlotUsedThisTurn =
-          false;
-
-        /*
-         * Entering a region records VISIT only.
-         * It never records completion.
-         */
-        if (
-          targetLocation === 1
-        ) {
-          recordProgression(
-            p,
-            {
-              forest_entered:
-                true
-            }
-          );
-        }
-
-        if (
-          targetLocation === 2
-        ) {
-          recordProgression(
-            p,
-            {
-              ruins_entered:
-                true
-            }
-          );
-        }
-
-        if (
-          targetLocation === 3
-        ) {
-          recordProgression(
-            p,
-            {
-              dungeon_entered:
-                true
-            }
-          );
-        }
-
-        if (
-          targetLocation === 4
-        ) {
-          recordProgression(
-            p,
-            {
-              canyon_entered:
-                true
-            }
-          );
-        }
-
-        if (
-          targetLocation === 5
-        ) {
-          recordProgression(
-            p,
-            {
-              lair_entered:
-                true
-            }
-          );
-        }
-
-        /*
-         * Build the canonical encounter for the unfinished chapter.
-         */
-        const spawned =
-          buildCampaignEncounterForHero(
-            s,
-            p,
-            targetLocation
-          );
-
-        if (
-          spawned.length >
-          0
-        ) {
-          s.enemies.push(
-            ...spawned
-          );
-
-          for (
-            const enemy of
-            spawned
-          ) {
-            touchChar(
-              enemy
-            );
-          }
         }
 
         log(
-          '?? Campanha: ' +
+          '📜 Campanha: ' +
             next.reason,
           'gm'
         );
-
-        log(
-          p.name +
-            ' avan?ou para ' +
-            locations[
-              targetLocation
-            ].name +
-            '. ' +
-            locations[
-              targetLocation
-            ].text,
-          'gm'
-        );
-
-        if (
-          spawned.length >
-          0
-        ) {
-          log(
-            '?? O objetivo da campanha est? ativo nesta regi?o. A miss?o s? ser? marcada como conclu?da depois da vit?ria real.',
-            'gm'
-          );
-        }
 
         break;
       }
@@ -4642,8 +4059,48 @@ export async function POST(req: NextRequest) {
           );
         }
 
+        syncMicroAdventureActivity(
+          s,
+          p,
+          adventureId
+        );
+
         touchChar(p);
 
+        break;
+      }
+
+      case 'syncDungeonActivity': {
+        const p = own();
+
+        const activity =
+          syncDungeonActivity(
+            s,
+            p,
+            a.expedition
+          );
+
+        clientActivityResult = {
+          id:
+            activity.id,
+          status:
+            activity.status
+        };
+
+        touchChar(p);
+        break;
+      }
+
+      case 'extractDungeonActivity': {
+        const p = own();
+
+        clientActivityResult =
+          extractDungeonActivity(
+            s,
+            p
+          );
+
+        touchChar(p);
         break;
       }
 
@@ -4666,28 +4123,78 @@ export async function POST(req: NextRequest) {
         break;
       }
       case 'questStep': {
-        const stepKey = String(a.step || '');
-        const p = own();
-        if (stepKey) {
-          recordProgression(p, { [stepKey]: true });
-        }
+        const stepKey =
+          String(
+            a.step || ''
+          );
+
+        const p =
+          own();
+
+        const proofDialogueKeys =
+          new Set([
+            'doran_talked',
+            'elenor_talked',
+            'kaelen_talked'
+          ]);
+
+        const protectedCompletionKeys =
+          new Set([
+            'forest_cleared',
+            'ruins_cleared',
+            'dungeon_cleared',
+            'malakor_defeated',
+            'canyon_cleared',
+            'ignisrax_defeated',
+            'campaign_completed'
+          ]);
+
         if (
-          stepKey === 'doran_talked' ||
-          stepKey === 'elenor_talked' ||
-          stepKey === 'kaelen_talked'
+          protectedCompletionKeys.has(
+            stepKey
+          )
+        ) {
+          throw Error(
+            'Este marco só pode ser concluído pela engine após evidência mecânica real.'
+          );
+        }
+
+        if (
+          proofDialogueKeys.has(
+            stepKey
+          )
         ) {
           markCampaignProof(
             s,
             p,
-            stepKey
+            stepKey as any
+          );
+        } else if (
+          stepKey
+        ) {
+          recordProgression(
+            p,
+            {
+              [stepKey]:
+                true
+            }
           );
         }
 
-        if (a.logText) {
-          log(String(a.logText), 'system');
+        if (
+          a.logText
+        ) {
+          log(
+            String(
+              a.logText
+            ),
+            'system'
+          );
         }
+
         break;
       }
+
       case 'equip': {
         const p = own();
         const nextEquipment = { ...(p.equipment || {}), ...(a.equipment || {}) };
@@ -5154,7 +4661,8 @@ export async function POST(req: NextRequest) {
           const ctx =
             readCompactWorldContext(
               s,
-              r.id
+              r.id,
+              c || undefined
             );
 
           const pacing =
@@ -5302,7 +4810,8 @@ export async function POST(req: NextRequest) {
                       'Amea?a emergente coerente com a regi?o e o ritmo do mundo.'
                   },
                   s,
-                  r.id
+                  r.id,
+                  hero || undefined
                 );
 
               if (
@@ -5342,23 +4851,18 @@ export async function POST(req: NextRequest) {
                       undefined;
                   }
 
-                  spawned.x =
-                    Math.max(
-                      0,
-                      Math.min(
-                        15,
-                        hero.x + 4
-                      )
+                  const spawnPoint =
+                    clampGridPoint(
+                      heroBiome,
+                      hero.x + 4,
+                      hero.y + 2
                     );
 
+                  spawned.x =
+                    spawnPoint.x;
+
                   spawned.y =
-                    Math.max(
-                      0,
-                      Math.min(
-                        15,
-                        hero.y + 2
-                      )
-                    );
+                    spawnPoint.y;
 
                   touchChar(
                     spawned
@@ -5417,7 +4921,8 @@ export async function POST(req: NextRequest) {
                       'Criar oportunidade social e sensa??o de mundo persistente.'
                   },
                   s,
-                  r.id
+                  r.id,
+                  hero || undefined
                 );
 
               if (
@@ -5442,23 +4947,18 @@ export async function POST(req: NextRequest) {
                   npc.biome =
                     heroBiome as any;
 
-                  npc.x =
-                    Math.max(
-                      0,
-                      Math.min(
-                        15,
-                        hero.x + 2
-                      )
+                  const npcPoint =
+                    clampGridPoint(
+                      heroBiome,
+                      hero.x + 2,
+                      hero.y + 1
                     );
 
+                  npc.x =
+                    npcPoint.x;
+
                   npc.y =
-                    Math.max(
-                      0,
-                      Math.min(
-                        15,
-                        hero.y + 1
-                      )
-                    );
+                    npcPoint.y;
                 }
               }
             } else if (
@@ -5597,13 +5097,182 @@ export async function POST(req: NextRequest) {
           r = fresh;
           s = freshState;
         }
-      } else if (a.action === 'location' || a.action === 'heartbeat') {
-        const fresh = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(r.id).first<Room>();
+      } else if (
+        a.action === 'location' ||
+        a.action === 'heartbeat' ||
+        a.action === 'syncDungeonActivity' ||
+        a.action === 'extractDungeonActivity'
+      ) {
+        const fresh =
+          await db
+            .prepare(
+              'SELECT * FROM rooms WHERE id=?'
+            )
+            .bind(r.id)
+            .first<Room>();
+
         if (fresh) {
-          await db.prepare('UPDATE rooms SET state=?,version=version+1 WHERE id=?')
-            .bind(JSON.stringify(s), fresh.id)
-            .run();
-          r = fresh;
+          const freshState:
+            State =
+            JSON.parse(
+              fresh.state
+            );
+
+          ensureWorldSpine(
+            freshState
+          );
+
+          const freshActor =
+            freshState.characters.find(
+              (character) =>
+                character.id ===
+                a.character
+            ) ||
+            freshState.characters.find(
+              (character) =>
+                character.owner ===
+                user!.userId
+            );
+
+          let mergedState =
+            freshState;
+
+          if (
+            a.action ===
+              'location'
+          ) {
+            if (!freshActor) {
+              throw Error(
+                'Personagem não encontrado durante reconciliação de viagem.'
+              );
+            }
+
+            const travelRetry =
+              travelPartyToLocation(
+                freshState,
+                freshActor,
+                Number(
+                  a.location
+                ),
+                {
+                  isMmo
+                }
+              );
+
+            if (
+              !travelRetry.success
+            ) {
+              throw Error(
+                travelRetry.reason
+              );
+            }
+
+            mergedState =
+              freshState;
+          } else if (
+            a.action ===
+              'syncDungeonActivity'
+          ) {
+            if (!freshActor) {
+              throw Error(
+                'Personagem não encontrado durante sincronização da dungeon.'
+              );
+            }
+
+            syncDungeonActivity(
+              freshState,
+              freshActor,
+              a.expedition
+            );
+
+            mergedState =
+              freshState;
+          } else if (
+            a.action ===
+              'extractDungeonActivity'
+          ) {
+            if (!freshActor) {
+              throw Error(
+                'Personagem não encontrado durante extração da dungeon.'
+              );
+            }
+
+            clientActivityResult =
+              extractDungeonActivity(
+                freshState,
+                freshActor
+              );
+
+            mergedState =
+              freshState;
+          } else {
+            mergedState =
+              mergeStates(
+                freshState,
+                s,
+                fresh.version,
+                r.version + 1
+              );
+          }
+
+          const retry =
+            await db
+              .prepare(
+                'UPDATE rooms SET state=?,version=version+1 WHERE id=? AND version=?'
+              )
+              .bind(
+                JSON.stringify(
+                  mergedState
+                ),
+                fresh.id,
+                fresh.version
+              )
+              .run();
+
+          if (
+            !(
+              retry?.meta?.changes ??
+              retry?.changes ??
+              0
+            )
+          ) {
+            const latest =
+              await db
+                .prepare(
+                  'SELECT * FROM rooms WHERE id=?'
+                )
+                .bind(r.id)
+                .first<Room>();
+
+            return withUserSession(
+              NextResponse.json(
+                {
+                  error:
+                    'Outra ação chegou primeiro. Estado preservado; tente novamente.',
+                  room:
+                    latest
+                      ? {
+                          ...latest,
+                          state:
+                            JSON.parse(
+                              latest.state
+                            )
+                        }
+                      : undefined
+                },
+                {
+                  status: 409
+                }
+              ),
+              user
+            );
+          }
+
+          r =
+            fresh;
+
+          s =
+            mergedState;
         }
       } else {
         const latest = await db.prepare('SELECT * FROM rooms WHERE id=?').bind(r.id).first<Room>();
@@ -5663,7 +5332,8 @@ export async function POST(req: NextRequest) {
       room: { ...updatedRoom, state: s },
       attackResult: clientAttackResult,
       healResult: clientHealResult,
-      lootResult: clientLootResult
+      lootResult: clientLootResult,
+      activityResult: clientActivityResult
     }), user);
   } catch (e) {
     console.error('[API Error]:', e);
